@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>온라인 쇼핑몰 배치 운영 콘솔</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-gray-50 p-4 text-gray-900 sm:p-8">
+<main class="mx-auto max-w-6xl">
+  <header class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <div>
+      <h1 class="text-2xl font-bold">온라인 쇼핑몰 배치 운영 콘솔</h1>
+      <p class="mt-1 text-sm text-gray-500">관리자 전용 배치 실행 및 이력 조회</p>
+    </div>
+
+    <form th:action="@{/logout}" method="post">
+      <button type="submit"
+              class="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100">
+        로그아웃
+      </button>
+    </form>
+  </header>
+
+  <!-- 배치 실행 카드 -->
+  <section class="mb-8 rounded-xl bg-white p-6 shadow" aria-labelledby="batch-run-title">
+    <h2 id="batch-run-title" class="mb-2 text-lg font-semibold">배치 실행</h2>
+    <p class="mb-4 text-sm text-gray-500">
+      실행할 때마다 새로운 <code class="rounded bg-gray-100 px-1 py-0.5">runAt</code> 파라미터가 생성됩니다.
+    </p>
+
+    <form th:action="@{/admin/jobs/hello}" method="post">
+      <button type="submit"
+              class="rounded-lg bg-indigo-600 px-4 py-2 font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
+        Hello 배치 실행
+      </button>
+    </form>
+  </section>
+
+  <!-- 실행 이력 표 -->
+  <section class="rounded-xl bg-white p-6 shadow" aria-labelledby="execution-history-title">
+    <div class="mb-4 flex items-center justify-between">
+      <h2 id="execution-history-title" class="text-lg font-semibold">최근 실행 이력</h2>
+      <span class="text-sm text-gray-500" th:text="|${#lists.size(executions)}건|">0건</span>
+    </div>
+
+    <div th:if="${#lists.isEmpty(executions)}"
+         class="rounded-lg border border-dashed border-gray-300 px-4 py-10 text-center text-sm text-gray-500">
+      아직 실행 이력이 없습니다. 위 버튼으로 첫 배치를 실행해 보세요.
+    </div>
+
+    <div th:unless="${#lists.isEmpty(executions)}" class="overflow-x-auto">
+      <table class="w-full text-left text-sm">
+        <thead class="border-b border-gray-200 text-gray-500">
+        <tr>
+          <th scope="col" class="px-3 py-3 font-medium">Job</th>
+          <th scope="col" class="px-3 py-3 font-medium">상태</th>
+          <th scope="col" class="px-3 py-3 font-medium">시작</th>
+          <th scope="col" class="px-3 py-3 font-medium">종료</th>
+        </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+        <tr th:each="execution : ${executions}" class="hover:bg-gray-50">
+          <td class="px-3 py-4 font-medium" th:text="${execution.jobName}">helloJob</td>
+          <td class="px-3 py-4">
+            <span th:text="${execution.status}"
+                  th:classappend="${execution.status == 'COMPLETED'}
+                    ? 'bg-green-100 text-green-700 ring-green-600/20'
+                    : (${execution.status == 'FAILED' or execution.status == 'ABANDONED'}
+                      ? 'bg-red-100 text-red-700 ring-red-600/20'
+                      : 'bg-amber-100 text-amber-700 ring-amber-600/20')"
+                  class="status-badge inline-flex rounded-full px-3 py-1 text-xs font-semibold ring-1 ring-inset">
+              COMPLETED
+            </span>
+          </td>
+          <td class="whitespace-nowrap px-3 py-4 text-gray-600" th:text="${execution.startTime}">
+            2026-11-22 12:00:00
+          </td>
+          <td class="whitespace-nowrap px-3 py-4 text-gray-600" th:text="${execution.endTime}">
+            2026-11-22 12:00:01
+          </td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+</body>
+</html>

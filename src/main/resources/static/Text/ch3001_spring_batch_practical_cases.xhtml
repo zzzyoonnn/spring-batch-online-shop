@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"
+  "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <title></title>
+  <link href="../Styles/Style0001.css" rel="stylesheet" type="text/css"/>
+</head>
+
+<body>
+<h2 class="disp_none">부록 A. Spring Batch 메타테이블 빠른 참조</h2>
+<p class="my_h1">부록 A. Spring Batch 메타테이블 빠른 참조</p>
+<p>Spring Batch는 Job·Step의 실행 상태를 메타테이블에 기록합니다. 이 테이블들이 재시작·이력 추적·멱등성의 근거가 됩니다. (처음 자세히 다룬 장: 2장·17장)</p>
+<p class="my_h2">메타테이블 한눈에 보기</p>
+<table>
+  <thead>
+    <tr><th>테이블</th><th>무엇을 담는가</th><th>자주 보는 컬럼</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>BATCH_JOB_INSTANCE</code></td><td>Job + 파라미터 조합(논리적 실행 단위)</td><td><code>job_instance_id</code>, <code>job_name</code></td></tr>
+    <tr><td><code>BATCH_JOB_EXECUTION</code></td><td>한 번의 Job 실행 결과</td><td><code>status</code>, <code>start_time</code>, <code>end_time</code>, <code>exit_message</code></td></tr>
+    <tr><td><code>BATCH_JOB_EXECUTION_PARAMS</code></td><td>실행에 넘긴 파라미터</td><td><code>parameter_name</code>, <code>parameter_value</code></td></tr>
+    <tr><td><code>BATCH_STEP_EXECUTION</code></td><td>Step별 실행 결과·건수</td><td><code>read_count</code>, <code>write_count</code>, <code>skip_count</code>, <code>commit_count</code>, <code>status</code></td></tr>
+    <tr><td><code>BATCH_JOB_EXECUTION_CONTEXT</code></td><td>Job 실행 상태(재시작용)</td><td><code>serialized_context</code></td></tr>
+    <tr><td><code>BATCH_STEP_EXECUTION_CONTEXT</code></td><td>Step 실행 상태(어디까지 읽었나)</td><td><code>serialized_context</code></td></tr>
+  </tbody>
+</table>
+<blockquote>
+<p>컬럼명은 Spring Batch 버전에 따라 일부 다를 수 있습니다(예: 시퀀스 테이블 유무). 정확한 스키마는 사용하는 버전의 공식 스키마 스크립트(<code>org/springframework/batch/core/schema-*.sql</code>)로 확인하세요.</p>
+</blockquote>
+<p class="my_h2">상태값(BatchStatus / ExitStatus)</p>
+<table>
+  <thead>
+    <tr><th>상태</th><th>의미</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>STARTING</code> / <code>STARTED</code></td><td>시작 준비 / 실행 중</td></tr>
+    <tr><td><code>COMPLETED</code></td><td>정상 종료</td></tr>
+    <tr><td><code>FAILED</code></td><td>실패 (재시작 대상)</td></tr>
+    <tr><td><code>STOPPED</code></td><td>중지됨</td></tr>
+    <tr><td><code>ABANDONED</code></td><td>포기됨 (재시작 시 건너뜀)</td></tr>
+  </tbody>
+</table>
+<p class="my_h2">운영에서 자주 쓰는 조회</p>
+<pre><code class="language-sql"><span class="hl-comment">-- 최근 실행 이력</span>
+<span class="hl-keyword">SELECT</span> job_execution_id, job_instance_id, status, start_time, end_time
+<span class="hl-keyword">FROM</span> BATCH_JOB_EXECUTION
+<span class="hl-keyword">ORDER</span> <span class="hl-keyword">BY</span> job_execution_id <span class="hl-keyword">DESC</span> <span class="hl-keyword">LIMIT</span> <span class="hl-number">20</span>;
+
+<span class="hl-comment">-- 실패한 실행과 원인</span>
+<span class="hl-keyword">SELECT</span> e.job_execution_id, i.job_name, e.status, e.exit_message
+<span class="hl-keyword">FROM</span> BATCH_JOB_EXECUTION e
+<span class="hl-keyword">JOIN</span> BATCH_JOB_INSTANCE i <span class="hl-keyword">ON</span> e.job_instance_id = i.job_instance_id
+<span class="hl-keyword">WHERE</span> e.status = <span class="hl-string">&#39;FAILED&#39;</span>
+<span class="hl-keyword">ORDER</span> <span class="hl-keyword">BY</span> e.job_execution_id <span class="hl-keyword">DESC</span>;
+
+<span class="hl-comment">-- Step별 처리 건수</span>
+<span class="hl-keyword">SELECT</span> step_name, read_count, write_count, skip_count, commit_count, status
+<span class="hl-keyword">FROM</span> BATCH_STEP_EXECUTION
+<span class="hl-keyword">WHERE</span> job_execution_id = ?;</code></pre>
+<p class="my_h2">스키마 초기화 설정 (application.properties)</p>
+<pre><code class="language-properties"><span class="hl-comment"># 개발: 자동 생성 / 운영: 수동 생성 후 never 권장</span>
+<span class="hl-keyword">spring.batch.jdbc.initialize-schema</span>=<span class="hl-string">always   # always | embedded | never</span>
+<span class="hl-comment"># 기동 시 등록된 Job 자동 실행 여부 (이 책은 화면/스케줄러로 실행하므로 false)</span>
+<span class="hl-keyword">spring.batch.job.enabled</span>=<span class="hl-string">false</span></code></pre>
+<blockquote>
+<p>💡 메타테이블은 코드로 직접 조회하기보다 <code>JobExplorer</code>·<code>JobOperator</code> API로 다루면 버전 변화에 안전합니다(4장·17장).</p>
+</blockquote>
+<blockquote>
+<p>💡 <strong>버전 메모(Spring Batch 6)</strong> — 6.0부터 <code>JobRepository</code>가 <code>JobExplorer</code>를, <code>JobOperator</code>가 <code>JobLauncher</code>를 상속합니다. 따라서 별도의 <code>JobExplorer</code>·<code>JobLauncher</code> 빈 없이 <code>JobRepository</code>·<code>JobOperator</code>만으로 조회와 실행을 모두 처리할 수 있습니다(<code>JobExplorer</code>는 deprecated). 메서드 이름과 동작은 동일하므로 이 책 예제는 5.2 이상과 6.0에서 그대로 동작합니다.</p>
+</blockquote>
+
+</body>
+</html>

@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"
+  "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <title></title>
+  <link href="../Styles/Style0001.css" rel="stylesheet" type="text/css"/>
+</head>
+
+<body>
+<h2 class="disp_none">4장. 운영 관리자 화면 만들기</h2>
+<p class="my_h1">4장. 운영 관리자 화면 만들기</p>
+<blockquote>
+<p><strong>이 장에서 배우는 것</strong></p>
+<ul>
+  <li>Spring Security로 관리자만 들어오는 백오피스 보호하기</li>
+  <li>Thymeleaf + Tailwind(CDN)로 배치 실행·이력 조회 화면 그리기</li>
+  <li><code>JobLauncher</code>로 화면 버튼에서 배치를 실행하고, 메타테이블을 읽어 이력 보여 주기</li>
+</ul>
+</blockquote>
+<hr/>
+<p class="my_h2">4.1 왜 화면이 먼저인가</p>
+<p>배치는 보이지 않는 곳에서 돌기 때문에, <strong>실행하고 상태를 확인할 창구</strong>가 없으면 운영이 막막합니다. 그래서 사례를 구현하기 전에 운영 콘솔부터 만듭니다. 이 화면은 책 전체에서 계속 자라납니다. 5장에서 CSV 업로드 버튼이, 7장에서 정산 실행 버튼이 여기 붙습니다.</p>
+<blockquote>
+<p>📌 <strong>핵심:</strong> 배치 시스템에서 화면은 사치가 아니라 운영 도구입니다. &quot;실행&quot; 버튼과 &quot;이력&quot; 표 두 가지면 충분히 시작할 수 있습니다.</p>
+</blockquote>
+<hr/>
+<p class="my_h2">4.2 Spring Security로 백오피스 잠그기</p>
+<p>운영 배치는 정산·회원·삭제처럼 위험한 작업을 다루므로, 인증된 관리자만 접근해야 합니다. 가장 단순한 형태로 시작합니다.</p>
+<pre><code class="language-java"><span class="hl-annotation">@Configuration</span>
+<span class="hl-annotation">@EnableWebSecurity</span>
+<span class="hl-keyword">public</span> <span class="hl-keyword">class</span> <span class="hl-class">SecurityConfig</span> {
+
+    <span class="hl-annotation">@Bean</span>
+    <span class="hl-keyword">public</span> <span class="hl-class">SecurityFilterChain</span> <span class="hl-method">filterChain</span>(<span class="hl-class">HttpSecurity</span> http) <span class="hl-keyword">throws</span> <span class="hl-class">Exception</span> {
+        http
+            .<span class="hl-method">authorizeHttpRequests</span>(auth -&gt; auth
+                .<span class="hl-method">requestMatchers</span>(<span class="hl-string">&quot;/css/**&quot;</span>, <span class="hl-string">&quot;/js/**&quot;</span>).<span class="hl-method">permitAll</span>()
+                .<span class="hl-method">anyRequest</span>().<span class="hl-method">hasRole</span>(<span class="hl-string">&quot;ADMIN&quot;</span>))
+            .<span class="hl-method">formLogin</span>(form -&gt; form
+                .<span class="hl-method">loginPage</span>(<span class="hl-string">&quot;/login&quot;</span>).<span class="hl-method">permitAll</span>());
+        <span class="hl-keyword">return</span> http;
+    }
+
+    <span class="hl-annotation">@Bean</span>
+    <span class="hl-keyword">public</span> <span class="hl-class">PasswordEncoder</span> <span class="hl-method">passwordEncoder</span>() {
+        <span class="hl-keyword">return</span> <span class="hl-class">PasswordEncoderFactories</span>.<span class="hl-method">createDelegatingPasswordEncoder</span>();
+    }
+
+    <span class="hl-annotation">@Bean</span>
+    <span class="hl-keyword">public</span> <span class="hl-class">UserDetailsService</span> <span class="hl-method">users</span>(<span class="hl-class">PasswordEncoder</span> encoder) {
+        <span class="hl-class">UserDetails</span> admin = <span class="hl-class">User</span>.<span class="hl-method">withUsername</span>(<span class="hl-string">&quot;admin&quot;</span>)
+                .<span class="hl-method">password</span>(encoder.<span class="hl-method">encode</span>(<span class="hl-string">&quot;admin1234&quot;</span>))
+                .<span class="hl-method">roles</span>(<span class="hl-string">&quot;ADMIN&quot;</span>)
+                .<span class="hl-method">build</span>();
+        <span class="hl-keyword">return</span> <span class="hl-keyword">new</span> <span class="hl-class">InMemoryUserDetailsManager</span>(admin);
+    }
+}</code></pre>
+<p>여기서는 학습을 위해 관리자 계정을 메모리에 둡니다. 실제 서비스라면 회원 테이블과 <code>UserDetailsService</code>를 연결하고 비밀번호를 BCrypt로 저장합니다.</p>
+<blockquote>
+<p>⚠️ 배치를 실행하는 엔드포인트(<code>POST /admin/jobs/...</code>)는 <strong>반드시 인증·권한 확인 뒤에</strong> 두어야 합니다. 외부에서 정산이나 삭제 배치를 임의로 트리거할 수 있으면 큰 사고로 이어집니다. CSRF 보호도 켜 두세요(폼에 토큰 자동 삽입).</p>
+</blockquote>
+<hr/>
+<p class="my_h2">4.3 Thymeleaf + Tailwind로 대시보드 그리기</p>
+<p>Tailwind는 CDN으로 한 줄만 추가하면 됩니다. 빌드 과정이 없어 학습용 백오피스에 잘 맞습니다.</p>
+<p><code>src/main/resources/templates/admin/dashboard.html</code>:</p>
+<pre><code class="language-html"><span class="hl-keyword">&lt;!DOCTYPE</span> <span class="hl-annotation">html</span><span class="hl-keyword">&gt;</span>
+<span class="hl-keyword">&lt;html</span> <span class="hl-annotation">xmlns:th</span>=<span class="hl-string">&quot;http://www.thymeleaf.org&quot;</span><span class="hl-keyword">&gt;</span>
+<span class="hl-keyword">&lt;head</span><span class="hl-keyword">&gt;</span>
+  <span class="hl-keyword">&lt;meta</span> <span class="hl-annotation">charset</span>=<span class="hl-string">&quot;UTF-8&quot;</span><span class="hl-keyword">&gt;</span>
+  <span class="hl-keyword">&lt;title</span><span class="hl-keyword">&gt;</span>마켓온 운영 콘솔<span class="hl-keyword">&lt;/title</span><span class="hl-keyword">&gt;</span>
+  <span class="hl-keyword">&lt;script</span> <span class="hl-annotation">src</span>=<span class="hl-string">&quot;https://cdn.tailwindcss.com&quot;</span><span class="hl-keyword">&gt;</span><span class="hl-keyword">&lt;/script</span><span class="hl-keyword">&gt;</span>
+<span class="hl-keyword">&lt;/head</span><span class="hl-keyword">&gt;</span>
+<span class="hl-keyword">&lt;body</span> <span class="hl-annotation">class</span>=<span class="hl-string">&quot;bg-gray-50 p-8&quot;</span><span class="hl-keyword">&gt;</span>
+  <span class="hl-keyword">&lt;h1</span> <span class="hl-annotation">class</span>=<span class="hl-string">&quot;text-2xl font-bold mb-6&quot;</span><span class="hl-keyword">&gt;</span>마켓온 운영 콘솔<span class="hl-keyword">&lt;/h1</span><span class="hl-keyword">&gt;</span>
+
+  <span class="hl-comment">&lt;!-- 배치 실행 카드 --&gt;</span>
+  <span class="hl-keyword">&lt;div</span> <span class="hl-annotation">class</span>=<span class="hl-string">&quot;bg-white rounded-xl shadow p-6 mb-8&quot;</span><span class="hl-keyword">&gt;</span>
+    <span class="hl-keyword">&lt;h2</span> <span class="hl-annotation">class</span>=<span class="hl-string">&quot;text-lg font-semibold mb-4&quot;</span><span class="hl-keyword">&gt;</span>배치 실행<span class="hl-keyword">&lt;/h2</span><span class="hl-keyword">&gt;</span>
+    <span class="hl-keyword">&lt;form</span> <span class="hl-annotation">th:action</span>=<span class="hl-string">&quot;@{/admin/jobs/hello}&quot;</span> <span class="hl-annotation">method</span>=<span class="hl-string">&quot;post&quot;</span><span class="hl-keyword">&gt;</span>
+      <span class="hl-keyword">&lt;button</span> <span class="hl-annotation">class</span>=<span class="hl-string">&quot;px-4 py-2 rounded-lg bg-indigo-600 text-white&quot;</span><span class="hl-keyword">&gt;</span>
+        Hello 배치 실행
+      <span class="hl-keyword">&lt;/button</span><span class="hl-keyword">&gt;</span>
+    <span class="hl-keyword">&lt;/form</span><span class="hl-keyword">&gt;</span>
+  <span class="hl-keyword">&lt;/div</span><span class="hl-keyword">&gt;</span>
+
+  <span class="hl-comment">&lt;!-- 실행 이력 표 --&gt;</span>
+  <span class="hl-keyword">&lt;div</span> <span class="hl-annotation">class</span>=<span class="hl-string">&quot;bg-white rounded-xl shadow p-6&quot;</span><span class="hl-keyword">&gt;</span>
+    <span class="hl-keyword">&lt;h2</span> <span class="hl-annotation">class</span>=<span class="hl-string">&quot;text-lg font-semibold mb-4&quot;</span><span class="hl-keyword">&gt;</span>최근 실행 이력<span class="hl-keyword">&lt;/h2</span><span class="hl-keyword">&gt;</span>
+    <span class="hl-keyword">&lt;table</span> <span class="hl-annotation">class</span>=<span class="hl-string">&quot;w-full text-sm&quot;</span><span class="hl-keyword">&gt;</span>
+      <span class="hl-keyword">&lt;thead</span> <span class="hl-annotation">class</span>=<span class="hl-string">&quot;text-left text-gray-500 border-b&quot;</span><span class="hl-keyword">&gt;</span>
+        <span class="hl-keyword">&lt;tr</span><span class="hl-keyword">&gt;</span><span class="hl-keyword">&lt;th</span> <span class="hl-annotation">class</span>=<span class="hl-string">&quot;py-2&quot;</span><span class="hl-keyword">&gt;</span>Job<span class="hl-keyword">&lt;/th</span><span class="hl-keyword">&gt;</span><span class="hl-keyword">&lt;th</span><span class="hl-keyword">&gt;</span>상태<span class="hl-keyword">&lt;/th</span><span class="hl-keyword">&gt;</span><span class="hl-keyword">&lt;th</span><span class="hl-keyword">&gt;</span>시작<span class="hl-keyword">&lt;/th</span><span class="hl-keyword">&gt;</span><span class="hl-keyword">&lt;th</span><span class="hl-keyword">&gt;</span>종료<span class="hl-keyword">&lt;/th</span><span class="hl-keyword">&gt;</span><span class="hl-keyword">&lt;/tr</span><span class="hl-keyword">&gt;</span>
+      <span class="hl-keyword">&lt;/thead</span><span class="hl-keyword">&gt;</span>
+      <span class="hl-keyword">&lt;tbody</span><span class="hl-keyword">&gt;</span>
+        <span class="hl-keyword">&lt;tr</span> <span class="hl-annotation">th:each</span>=<span class="hl-string">&quot;e : ${executions}&quot;</span> <span class="hl-annotation">class</span>=<span class="hl-string">&quot;border-b&quot;</span><span class="hl-keyword">&gt;</span>
+          <span class="hl-keyword">&lt;td</span> <span class="hl-annotation">class</span>=<span class="hl-string">&quot;py-2&quot;</span> <span class="hl-annotation">th:text</span>=<span class="hl-string">&quot;${e.jobName}&quot;</span><span class="hl-keyword">&gt;</span>jobName<span class="hl-keyword">&lt;/td</span><span class="hl-keyword">&gt;</span>
+          <span class="hl-keyword">&lt;td</span><span class="hl-keyword">&gt;</span>
+            <span class="hl-keyword">&lt;span</span> <span class="hl-annotation">th:text</span>=<span class="hl-string">&quot;${e.status}&quot;</span>
+                  <span class="hl-annotation">th:classappend</span>=<span class="hl-string">&quot;${e.status.name() == &#39;COMPLETED&#39;}
+                    ? &#39;text-green-600&#39; : &#39;text-red-600&#39;&quot;</span><span class="hl-keyword">&gt;</span>STATUS<span class="hl-keyword">&lt;/span</span><span class="hl-keyword">&gt;</span>
+          <span class="hl-keyword">&lt;/td</span><span class="hl-keyword">&gt;</span>
+          <span class="hl-keyword">&lt;td</span> <span class="hl-annotation">th:text</span>=<span class="hl-string">&quot;${e.startTime}&quot;</span><span class="hl-keyword">&gt;</span>start<span class="hl-keyword">&lt;/td</span><span class="hl-keyword">&gt;</span>
+          <span class="hl-keyword">&lt;td</span> <span class="hl-annotation">th:text</span>=<span class="hl-string">&quot;${e.endTime}&quot;</span><span class="hl-keyword">&gt;</span>end<span class="hl-keyword">&lt;/td</span><span class="hl-keyword">&gt;</span>
+        <span class="hl-keyword">&lt;/tr</span><span class="hl-keyword">&gt;</span>
+      <span class="hl-keyword">&lt;/tbody</span><span class="hl-keyword">&gt;</span>
+    <span class="hl-keyword">&lt;/table</span><span class="hl-keyword">&gt;</span>
+  <span class="hl-keyword">&lt;/div</span><span class="hl-keyword">&gt;</span>
+<span class="hl-keyword">&lt;/body</span><span class="hl-keyword">&gt;</span>
+<span class="hl-keyword">&lt;/html</span><span class="hl-keyword">&gt;</span></code></pre>
+<blockquote>
+<p>💡 <code>th:classappend</code>로 상태값에 따라 색을 바꾸면, 실패한 실행이 표에서 빨갛게 도드라져 한눈에 들어옵니다. 운영 화면의 작은 친절이 장애 대응 속도를 바꿉니다.</p>
+</blockquote>
+<hr/>
+<p class="my_h2">4.4 화면에서 배치 실행하기</p>
+<p>이제 버튼을 실제 배치에 연결합니다. 핵심은 <strong><code>JobLauncher</code></strong>입니다. Job과 <code>JobParameters</code>를 넘기면 실행해 줍니다.</p>
+<pre><code class="language-java"><span class="hl-annotation">@Controller</span>
+<span class="hl-annotation">@RequestMapping</span>(<span class="hl-string">&quot;/admin&quot;</span>)
+<span class="hl-annotation">@RequiredArgsConstructor</span>
+<span class="hl-keyword">public</span> <span class="hl-keyword">class</span> <span class="hl-class">AdminBatchController</span> {
+
+    <span class="hl-keyword">private</span> <span class="hl-keyword">final</span> <span class="hl-class">JobLauncher</span> jobLauncher;
+    <span class="hl-keyword">private</span> <span class="hl-keyword">final</span> <span class="hl-class">Job</span> helloJob;
+    <span class="hl-keyword">private</span> <span class="hl-keyword">final</span> <span class="hl-class">JobExplorer</span> jobExplorer; <span class="hl-comment">// 이력 조회용</span>
+
+    <span class="hl-annotation">@GetMapping</span>
+    <span class="hl-keyword">public</span> <span class="hl-class">String</span> <span class="hl-method">dashboard</span>(<span class="hl-class">Model</span> model) {
+        <span class="hl-comment">// 최근 실행 이력을 화면에 전달 (간략화)</span>
+        model.<span class="hl-method">addAttribute</span>(<span class="hl-string">&quot;executions&quot;</span>, <span class="hl-method">recentExecutions</span>());
+        <span class="hl-keyword">return</span> <span class="hl-string">&quot;admin/dashboard&quot;</span>;
+    }
+
+    <span class="hl-annotation">@PostMapping</span>(<span class="hl-string">&quot;/jobs/hello&quot;</span>)
+    <span class="hl-keyword">public</span> <span class="hl-class">String</span> <span class="hl-method">runHello</span>() <span class="hl-keyword">throws</span> <span class="hl-class">Exception</span> {
+        <span class="hl-class">JobParameters</span> params = <span class="hl-keyword">new</span> <span class="hl-class">JobParametersBuilder</span>()
+                .<span class="hl-method">addLong</span>(<span class="hl-string">&quot;runAt&quot;</span>, <span class="hl-class">System</span>.<span class="hl-method">currentTimeMillis</span>()) <span class="hl-comment">// 매번 다른 파라미터</span>
+                .<span class="hl-method">toJobParameters</span>();
+        jobLauncher.<span class="hl-method">run</span>(helloJob, params);
+        <span class="hl-keyword">return</span> <span class="hl-string">&quot;redirect:/admin&quot;</span>;
+    }
+}</code></pre>
+<p>여기서 <code>runAt</code>에 현재 시각을 넣은 이유가 중요합니다. Spring Batch는 <strong>같은 Job + 같은 파라미터 조합을 한 번만 성공 실행</strong>하도록 막습니다(<code>JobInstanceAlreadyCompleteException</code>). 그래서 &quot;언제든 다시 눌러도 실행되는&quot; 단순 작업에는 매번 다른 값을 넣습니다.</p>
+<blockquote>
+<p>⚠️ 반대로 정산·통계처럼 <em>기준일 하루에 한 번만 돌아야 하는</em> 배치는 이 동작이 오히려 안전장치가 됩니다(7·8장). 파라미터에 <code>date=2026-06-29</code>를 넣으면, 같은 날짜로는 두 번 성공 실행되지 않습니다. 파라미터 설계가 곧 멱등성 설계의 출발점입니다.</p>
+</blockquote>
+<hr/>
+<p class="my_h2">4.5 이력 조회</p>
+<p>이력은 메타테이블을 읽는 <strong><code>JobExplorer</code></strong>로 가져옵니다. JPA로 직접 조회하지 않고 Spring Batch가 제공하는 API를 쓰면, 메타 스키마가 바뀌어도 코드가 안전합니다.</p>
+<blockquote>
+<p>💡 <strong>버전 메모</strong> — Spring Batch 6에서는 <code>JobRepository</code>가 <code>JobExplorer</code>를 상속하도록 바뀌어, 별도의 <code>JobExplorer</code> 빈이 필요 없어졌습니다(<code>JobExplorer</code> 자체는 deprecated). 6에서는 아래 코드의 <code>jobExplorer</code> 자리에 <code>JobRepository</code>를 주입해 같은 메서드(<code>getJobNames</code>, <code>getJobInstances</code>, <code>getJobExecutions</code>)를 그대로 호출하면 됩니다. 마찬가지로 <code>JobOperator</code>가 <code>JobLauncher</code>를 상속하므로, 실행도 <code>JobOperator</code> 하나로 통합할 수 있습니다. 동작과 메서드 이름은 동일하므로 이 책의 흐름은 그대로 적용됩니다.</p>
+</blockquote>
+<pre><code class="language-java"><span class="hl-keyword">private</span> <span class="hl-class">List</span>&lt;<span class="hl-class">JobExecution</span>&gt; <span class="hl-method">recentExecutions</span>() {
+    <span class="hl-class">List</span>&lt;<span class="hl-class">JobExecution</span>&gt; result = <span class="hl-keyword">new</span> <span class="hl-class">ArrayList</span>&lt;&gt;();
+    <span class="hl-keyword">for</span> (<span class="hl-class">String</span> name : jobExplorer.<span class="hl-method">getJobNames</span>()) {
+        jobExplorer.<span class="hl-method">getJobInstances</span>(name, <span class="hl-number">0</span>, <span class="hl-number">5</span>).<span class="hl-method">forEach</span>(instance -&gt;
+            result.<span class="hl-method">addAll</span>(jobExplorer.<span class="hl-method">getJobExecutions</span>(instance)));
+    }
+    <span class="hl-keyword">return</span> result;
+}</code></pre>
+<blockquote>
+<p>🧪 <strong>실습 — 운영 콘솔 완성하기</strong></p>
+<ol>
+  <li value="1"><code>SecurityConfig</code>, <code>dashboard.html</code>, <code>AdminBatchController</code>를 추가합니다.</li>
+  <li value="2">애플리케이션을 띄우고 <code>/login</code>에서 <code>admin / admin1234</code>로 로그인합니다.</li>
+  <li value="3">&quot;Hello 배치 실행&quot; 버튼을 누르고, 아래 이력 표에 <code>COMPLETED</code> 행이 초록색으로 뜨는지 확인합니다.</li>
+  <li value="4">버튼을 여러 번 눌러 매번 새 실행이 쌓이는지 봅니다(<code>runAt</code> 덕분).</li>
+</ol>
+<p>이 콘솔이 앞으로 모든 사례 배치의 실행·확인 창구가 됩니다.</p>
+</blockquote>
+<hr/>
+<p class="my_h2">이 장의 요점</p>
+<ul>
+  <li>배치를 만들기 전에 운영 콘솔을 먼저 세웁니다. Spring Security로 관리자만 접근하게 잠급니다.</li>
+  <li>Thymeleaf + Tailwind(CDN)로 &quot;실행 버튼&quot;과 &quot;이력 표&quot;를 그리고, 상태값에 따라 색을 달리해 가독성을 높입니다.</li>
+  <li>화면 버튼은 <code>JobLauncher.run(job, params)</code>로 배치를 실행하고, 이력은 <code>JobExplorer</code>로 메타테이블에서 읽습니다. JobParameters 설계가 멱등성의 출발점입니다.</li>
+</ul>
+<hr/>
+<p><strong>다음 장에서는</strong> 첫 실전 사례로 들어갑니다. 관리자가 올린 상품 CSV 10만 건을 한 줄씩 읽고 검증해 저장하고, 실패한 행만 따로 리포트로 남기는 업로드 배치를 만듭니다.</p>
+
+</body>
+</html>

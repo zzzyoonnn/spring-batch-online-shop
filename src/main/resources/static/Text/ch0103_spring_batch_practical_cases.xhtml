@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"
+  "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <title></title>
+  <link href="../Styles/Style0001.css" rel="stylesheet" type="text/css"/>
+</head>
+
+<body>
+<h2 class="disp_none">3장. Spring Batch 핵심 구조</h2>
+<p class="my_h1">3장. Spring Batch 핵심 구조</p>
+<blockquote>
+<p><strong>이 장에서 배우는 것</strong></p>
+<ul>
+  <li>Job, Step, Chunk의 관계와 Reader→Processor→Writer 흐름</li>
+  <li>Spring Batch 5(Spring Boot 3) 방식으로 Job·Step을 정의하는 법</li>
+  <li>가장 단순한 배치를 직접 만들어 실행하고 메타테이블 확인하기</li>
+</ul>
+</blockquote>
+<hr/>
+<p class="my_h2">3.1 Job, Step, Chunk</p>
+<p>Spring Batch의 구조는 러시아 인형처럼 포개져 있습니다.</p>
+<pre><code class="language-text">Job  (하나의 배치 작업 전체, 예: 정산 배치)
+ └─ Step  (작업의 한 단계, 예: 정산 대상 조회 / 수수료 계산 / 저장)
+     └─ Chunk  (Step 안에서 한 번에 커밋하는 묶음, 예: 1,000건)
+         └─ Item  (낱개 데이터 한 건, 예: 주문 한 건)</code></pre>
+<p><strong>Job</strong>은 &quot;정산 배치&quot;처럼 의미 있는 작업 한 덩어리입니다. <strong>Step</strong>은 그 작업의 한 단계이고, 하나의 Job은 여러 Step을 순서대로 실행할 수 있습니다. 그리고 각 Step 안에서 데이터를 <strong>Chunk(청크)</strong> 단위로 끊어 처리합니다.</p>
+<p>Chunk가 이 책의 관통 원칙 &quot;작게 나눠 처리하기&quot;의 실체입니다. Chunk 크기를 1,000으로 정하면, Reader가 1,000건을 읽어 Processor로 가공하고 Writer로 저장한 뒤 <strong>한 번 커밋</strong>합니다. 그다음 1,000건을 또 묶어 처리합니다. 이렇게 하면 10만 건을 한 트랜잭션에 욱여넣지 않고, 1,000건씩 100번에 나눠 안전하게 처리할 수 있습니다.</p>
+<blockquote>
+<p>📌 <strong>핵심:</strong> Chunk는 &quot;읽기·가공·쓰기를 묶어 한 번에 커밋하는 단위&quot;입니다. Chunk 하나가 실패하면 그 Chunk만 롤백되고, 이미 커밋된 앞쪽 Chunk는 살아남습니다.</p>
+</blockquote>
+<hr/>
+<p class="my_h2">3.2 Reader → Processor → Writer</p>
+<p>Step 안에서 데이터는 세 손을 거칩니다.</p>
+<ul>
+  <li><strong>ItemReader</strong> — 데이터를 한 건씩 읽어 옵니다. CSV 파일, DB, 외부 API 등 출처는 다양합니다.</li>
+  <li><strong>ItemProcessor</strong> — 읽은 한 건을 가공·검증·변환합니다. <code>null</code>을 반환하면 그 건은 Writer로 넘어가지 않고 걸러집니다(필터링).</li>
+  <li><strong>ItemWriter</strong> — 가공된 묶음(Chunk)을 한꺼번에 저장하거나 전달합니다.</li>
+</ul>
+<pre><code class="language-text">CSV 한 줄  →  Reader  →  Processor(검증·변환)  →  Writer(DB 저장)</code></pre>
+<p>Processor는 선택입니다. 단순히 읽어서 그대로 저장만 한다면 생략할 수 있습니다. 이 세 인터페이스의 구현을 갈아 끼우는 것만으로 &quot;파일→DB&quot;, &quot;DB→DB&quot;, &quot;DB→API&quot;, &quot;API→DB&quot; 같은 모든 조합을 만들 수 있습니다(부록 B 참조).</p>
+<hr/>
+<p class="my_h2">3.3 Spring Batch 5 방식으로 Job 정의하기</p>
+<p>Spring Boot 3 / Spring Batch 5부터는 설정 방식이 단순해졌습니다. 과거에 쓰던 <code>@EnableBatchProcessing</code>이나 <code>JobBuilderFactory</code>·<code>StepBuilderFactory</code>는 더 이상 필요하지 않습니다. 대신 스프링이 자동 구성해 주는 <strong><code>JobRepository</code></strong>와 <strong><code>PlatformTransactionManager</code></strong>를 주입받아, <code>JobBuilder</code>·<code>StepBuilder</code>로 직접 조립합니다.</p>
+<blockquote>
+<p>💡 이 <code>JobBuilder</code>·<code>StepBuilder</code> 패턴은 최신 안정 버전인 <strong>Spring Batch 6</strong>에서도 그대로 유효합니다. Spring Boot 자동 구성을 쓰면 6에서도 별도 애너테이션이 필요 없습니다(직접 구성할 때만 6에서 새로 생긴 <code>@EnableJdbcJobRepository</code> 등을 씁니다). 이 책의 예제 코드는 Spring Batch 5.2 이상과 6.0에서 동일하게 동작합니다. 사용하는 버전은 [start.spring.io](https://start.spring.io)에서 생성하면 호환 버전이 자동으로 맞춰집니다.</p>
+</blockquote>
+<p>가장 단순한 &quot;Hello Batch&quot;를 보겠습니다. 데이터를 읽지 않고 한 번만 실행되는 <code>Tasklet</code> Step입니다.</p>
+<pre><code class="language-java"><span class="hl-annotation">@Configuration</span>
+<span class="hl-annotation">@RequiredArgsConstructor</span>
+<span class="hl-keyword">public</span> <span class="hl-keyword">class</span> <span class="hl-class">HelloJobConfig</span> {
+
+    <span class="hl-keyword">private</span> <span class="hl-keyword">final</span> <span class="hl-class">JobRepository</span> jobRepository;
+    <span class="hl-keyword">private</span> <span class="hl-keyword">final</span> <span class="hl-class">PlatformTransactionManager</span> transactionManager;
+
+    <span class="hl-annotation">@Bean</span>
+    <span class="hl-keyword">public</span> <span class="hl-class">Job</span> <span class="hl-method">helloJob</span>() {
+        <span class="hl-keyword">return</span> <span class="hl-keyword">new</span> <span class="hl-class">JobBuilder</span>(<span class="hl-string">&quot;helloJob&quot;</span>, jobRepository)
+                .<span class="hl-method">start</span>(<span class="hl-method">helloStep</span>())
+                .<span class="hl-method">build</span>();
+    }
+
+    <span class="hl-annotation">@Bean</span>
+    <span class="hl-keyword">public</span> <span class="hl-class">Step</span> <span class="hl-method">helloStep</span>() {
+        <span class="hl-keyword">return</span> <span class="hl-keyword">new</span> <span class="hl-class">StepBuilder</span>(<span class="hl-string">&quot;helloStep&quot;</span>, jobRepository)
+                .<span class="hl-method">tasklet</span>((contribution, chunkContext) -&gt; {
+                    <span class="hl-class">System</span>.out.<span class="hl-method">println</span>(<span class="hl-string">&quot;Hello, Spring Batch!&quot;</span>);
+                    <span class="hl-keyword">return</span> <span class="hl-class">RepeatStatus</span>.FINISHED;
+                }, transactionManager)
+                .<span class="hl-method">build</span>();
+    }
+}</code></pre>
+<p>여기서 두 가지를 기억하세요. 첫째, <code>JobBuilder</code>와 <code>StepBuilder</code>의 생성자에 <strong>이름</strong>과 <strong><code>jobRepository</code></strong>를 넘깁니다. 이름은 메타테이블에 그대로 기록됩니다. 둘째, <code>tasklet</code>과 청크 기반 Step 모두 <strong><code>transactionManager</code></strong>를 요구합니다. 트랜잭션 경계를 스프링이 관리하기 때문입니다.</p>
+<blockquote>
+<p>💡 <strong>Tasklet vs Chunk</strong> — Step에는 두 가지 방식이 있습니다. <code>Tasklet</code>은 &quot;한 번 실행하고 끝나는 단순 작업&quot;(예: 테이블 초기화, 파일 정리)에, <strong>Chunk 기반</strong>은 &quot;대량 데이터를 묶어 반복 처리&quot;에 씁니다. 사례 대부분은 Chunk 기반을 씁니다.</p>
+</blockquote>
+<hr/>
+<p class="my_h2">3.4 청크 기반 Step의 모양</p>
+<p>5장부터 본격적으로 쓸 Chunk 기반 Step의 뼈대는 다음과 같습니다. <code>&lt;I, O&gt;</code>는 Reader가 읽는 타입(I)과 Writer가 받는 타입(O)입니다.</p>
+<pre><code class="language-java"><span class="hl-annotation">@Bean</span>
+<span class="hl-keyword">public</span> <span class="hl-class">Step</span> <span class="hl-method">sampleStep</span>() {
+    <span class="hl-keyword">return</span> <span class="hl-keyword">new</span> <span class="hl-class">StepBuilder</span>(<span class="hl-string">&quot;sampleStep&quot;</span>, jobRepository)
+            .&lt;<span class="hl-class">InputType</span>, <span class="hl-class">OutputType</span>&gt;<span class="hl-method">chunk</span>(<span class="hl-number">1000</span>, transactionManager) <span class="hl-comment">// 청크 크기 1,000</span>
+            .<span class="hl-method">reader</span>(<span class="hl-method">reader</span>())
+            .<span class="hl-method">processor</span>(<span class="hl-method">processor</span>())
+            .<span class="hl-method">writer</span>(<span class="hl-method">writer</span>())
+            .<span class="hl-method">build</span>();
+}</code></pre>
+<p><code>chunk(1000, transactionManager)</code> 한 줄에 관통 원칙이 담겨 있습니다. 1,000건마다 커밋하므로, 5만 번째 건에서 실패해도 앞의 4만 9천 건은 안전하게 저장되어 있고, 재시작하면 5만 번째부터 이어 갑니다.</p>
+<blockquote>
+<p>⚠️ 청크 크기는 정답이 없습니다. 너무 작으면 커밋이 잦아 느리고, 너무 크면 실패 시 롤백 범위가 커지고 메모리를 많이 씁니다. 보통 100~1,000 사이에서 시작해 측정으로 조정합니다(15·16장).</p>
+</blockquote>
+<hr/>
+<p class="my_h2">3.5 메타테이블로 결과 확인하기</p>
+<p>Job을 실행하면 Spring Batch는 결과를 메타테이블에 남깁니다. 정상 종료한 실행은 <code>BATCH_JOB_EXECUTION.STATUS</code>가 <code>COMPLETED</code>로 기록되고, Step별 읽기/쓰기 건수는 <code>BATCH_STEP_EXECUTION</code>의 <code>READ_COUNT</code>·<code>WRITE_COUNT</code>에 남습니다.</p>
+<pre><code class="language-sql"><span class="hl-keyword">SELECT</span> job_instance_id, status, start_time, end_time
+<span class="hl-keyword">FROM</span> BATCH_JOB_EXECUTION
+<span class="hl-keyword">ORDER</span> <span class="hl-keyword">BY</span> job_execution_id <span class="hl-keyword">DESC</span>;</code></pre>
+<p>이 한 줄이 운영에서 &quot;어제 새벽 정산이 잘 돌았나?&quot;를 확인하는 출발점입니다.</p>
+<blockquote>
+<p>🧪 <strong>실습 — Hello Batch 실행하기</strong></p>
+<ol>
+  <li value="1">위 <code>HelloJobConfig</code>를 <code>com.marketon.batch.hello</code> 패키지에 추가합니다.</li>
+  <li value="2">애플리케이션을 실행한 뒤, 임시로 <code>JobLauncher</code>로 <code>helloJob</code>을 실행합니다. (다음 4장에서 이 실행을 화면 버튼에 연결합니다.)</li>
+  <li value="3">콘솔에 <code>Hello, Spring Batch!</code>가 찍히는지, 그리고 위 SQL로 <code>COMPLETED</code> 한 줄이 생겼는지 확인합니다.</li>
+</ol>
+<p>같은 파라미터로 다시 실행해 보세요. &quot;이미 완료된 Job&quot;이라며 실행을 거부할 것입니다. 이 동작이 4장과 7장에서 멱등성을 이해하는 열쇠가 됩니다.</p>
+</blockquote>
+<hr/>
+<p class="my_h2">이 장의 요점</p>
+<ul>
+  <li>Job은 작업 전체, Step은 한 단계, Chunk는 한 번에 커밋하는 묶음입니다. Chunk가 &quot;작게 나눠 처리하기&quot;의 실체입니다.</li>
+  <li>데이터는 Reader(읽기) → Processor(가공·검증) → Writer(쓰기)를 거치며, Processor가 <code>null</code>을 반환하면 그 건은 걸러집니다.</li>
+  <li>Spring Batch 5에서는 <code>JobRepository</code>·<code>PlatformTransactionManager</code>를 주입받아 <code>JobBuilder</code>·<code>StepBuilder</code>로 Job/Step을 조립하고, 결과는 메타테이블로 확인합니다.</li>
+</ul>
+<hr/>
+<p><strong>다음 장에서는</strong> Thymeleaf와 Tailwind로 관리자 화면을 그리고, Spring Security로 보호한 뒤, 화면의 버튼에서 직접 배치를 실행하고 이력을 조회하는 운영 콘솔을 만듭니다.</p>
+
+</body>
+</html>

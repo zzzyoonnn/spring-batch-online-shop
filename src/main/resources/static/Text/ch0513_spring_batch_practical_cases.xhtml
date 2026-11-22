@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"
+  "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <title></title>
+  <link href="../Styles/Style0001.css" rel="stylesheet" type="text/css"/>
+</head>
+
+<body>
+<h2 class="disp_none">13장. 외부 API 연동 데이터 수집</h2>
+<p class="my_h1">13장. 외부 API 연동 데이터 수집</p>
+<blockquote>
+<p><strong>이 장에서 배우는 것</strong></p>
+<ul>
+  <li>외부 API를 호출해 데이터를 수집하는 Custom ItemReader 만들기</li>
+  <li>일시적 실패(타임아웃·제한)를 견디는 Retry 정책</li>
+  <li>수집 Step과 저장 Step을 분리해 장애 분석을 쉽게 하기</li>
+</ul>
+</blockquote>
+<hr/>
+<p class="my_h2">13.1 사례 이해: 불안정한 바깥세상</p>
+<p>외부 시스템에서 데이터를 가져와 내부 DB에 저장하는 작업입니다.</p>
+<pre><code class="language-text">외부 API 호출
+ → 응답 데이터 파싱
+ → 내부 형식으로 변환
+ → DB 저장</code></pre>
+<p>택배사 배송 상태 수집, PG사 결제 상태 동기화, 공공데이터 수집, 환율 정보 수집, ERP/CRM 동기화, 광고 플랫폼 리포트 수집이 모두 여기에 속합니다.</p>
+<p>외부 API의 특징은 <strong>일시적으로 실패한다</strong>는 것입니다. 네트워크 오류, 타임아웃, API 호출 제한(rate limit), 인증 만료 같은 문제가 수시로 발생합니다. 한 번 실패했다고 전체를 포기하면 안 되고, 잠시 후 다시 시도하면 성공하는 경우가 많습니다.</p>
+<blockquote>
+<p>📌 <strong>핵심:</strong> 외부 연동 배치의 두 기둥은 <strong>재시도(Retry)</strong>와 <strong>중복 저장 방지</strong>입니다. 실패는 견디고, 성공은 두 번 저장하지 않습니다.</p>
+</blockquote>
+<hr/>
+<p class="my_h2">13.2 Custom ItemReader로 API 호출</p>
+<p>표준 Reader는 파일·DB용입니다. API 호출은 직접 <code>ItemReader</code>를 구현합니다. 한 번에 한 페이지씩 받아 와 <code>read()</code>로 한 건씩 내보내는 방식이 일반적입니다.</p>
+<pre><code class="language-java"><span class="hl-annotation">@Component</span>
+<span class="hl-annotation">@StepScope</span>
+<span class="hl-annotation">@RequiredArgsConstructor</span>
+<span class="hl-keyword">public</span> <span class="hl-keyword">class</span> <span class="hl-class">ExchangeRateApiReader</span> <span class="hl-keyword">implements</span> <span class="hl-class">ItemReader</span>&lt;<span class="hl-class">RateDto</span>&gt; {
+
+    <span class="hl-keyword">private</span> <span class="hl-keyword">final</span> <span class="hl-class">ExchangeRateClient</span> client; <span class="hl-comment">// RestClient 등으로 구현</span>
+    <span class="hl-keyword">private</span> <span class="hl-class">Iterator</span>&lt;<span class="hl-class">RateDto</span>&gt; buffer;
+
+    <span class="hl-annotation">@Override</span>
+    <span class="hl-keyword">public</span> <span class="hl-class">RateDto</span> <span class="hl-method">read</span>() {
+        <span class="hl-keyword">if</span> (buffer == <span class="hl-keyword">null</span>) {
+            buffer = client.<span class="hl-method">fetchRates</span>().<span class="hl-method">iterator</span>(); <span class="hl-comment">// 외부 API 1회 호출</span>
+        }
+        <span class="hl-keyword">return</span> buffer.<span class="hl-method">hasNext</span>() ? buffer.<span class="hl-method">next</span>() : <span class="hl-keyword">null</span>; <span class="hl-comment">// null이면 읽기 종료</span>
+    }
+}</code></pre>
+<blockquote>
+<p>💡 페이지가 여러 개인 API라면, 현재 페이지를 다 내보낸 뒤 다음 페이지를 호출해 버퍼를 채우는 식으로 확장합니다. <code>read()</code>가 <code>null</code>을 반환할 때 Step의 읽기가 끝납니다.</p>
+</blockquote>
+<hr/>
+<p class="my_h2">13.3 Retry: 일시적 실패 견디기</p>
+<p>Step에 Retry 정책을 걸면, 지정한 예외에 대해 같은 아이템을 정해진 횟수만큼 다시 시도합니다.</p>
+<pre><code class="language-java"><span class="hl-annotation">@Bean</span>
+<span class="hl-keyword">public</span> <span class="hl-class">Step</span> <span class="hl-method">collectRateStep</span>() {
+    <span class="hl-keyword">return</span> <span class="hl-keyword">new</span> <span class="hl-class">StepBuilder</span>(<span class="hl-string">&quot;collectRateStep&quot;</span>, jobRepository)
+            .&lt;<span class="hl-class">RateDto</span>, <span class="hl-class">Rate</span>&gt;<span class="hl-method">chunk</span>(<span class="hl-number">100</span>, transactionManager)
+            .<span class="hl-method">reader</span>(exchangeRateApiReader)
+            .<span class="hl-method">processor</span>(rateProcessor)
+            .<span class="hl-method">writer</span>(rateWriter)
+            .<span class="hl-method">faultTolerant</span>()
+            .<span class="hl-method">retry</span>(<span class="hl-class">ApiTemporaryException</span>.<span class="hl-keyword">class</span>) <span class="hl-comment">// 일시적 오류만 재시도</span>
+            .<span class="hl-method">retryLimit</span>(<span class="hl-number">3</span>)
+            .<span class="hl-method">build</span>();
+}</code></pre>
+<p>핵심은 <strong>무엇을 재시도하고 무엇을 재시도하지 않을지</strong> 구분하는 것입니다.</p>
+<pre><code class="language-text">재시도해야 할 것 (일시적):
+  연결 타임아웃, 503 Service Unavailable, 일시적 rate limit
+
+재시도하면 안 되는 것 (영구적):
+  401 인증 실패, 400 잘못된 요청, 파싱 불가능한 응답</code></pre>
+<p>영구적 오류를 재시도하면 같은 실패를 반복하며 시간만 낭비합니다. 클라이언트에서 응답 코드를 보고 <code>ApiTemporaryException</code>과 영구 예외를 구분해 던지는 것이 좋습니다.</p>
+<blockquote>
+<p>⚠️ 외부 API에는 호출 제한이 있는 경우가 많습니다. Retry를 무한정·즉시 반복하면 제한에 걸려 오히려 차단될 수 있습니다. 재시도 사이에 backoff(점점 늘어나는 대기 시간)를 두고, 호출량 자체를 조절하세요. 구체적 설정은 공식 문서로 확인합니다.</p>
+</blockquote>
+<hr/>
+<p class="my_h2">13.4 수집과 저장을 나누기, 그리고 중복 방지</p>
+<p>외부 API 호출 Step과 DB 반영 Step을 분리하면 장애 분석이 쉬워집니다. &quot;API에서 못 받아 온 것&quot;과 &quot;받았는데 저장에서 실패한 것&quot;을 구분할 수 있기 때문입니다.</p>
+<pre><code class="language-text">Step 1: 외부 API 데이터 수집 → 원본 그대로 저장 (raw)
+Step 2: 수집 원본을 내부 모델로 변환
+Step 3: 서비스 테이블에 반영</code></pre>
+<p>중복 저장 방지는 다른 사례와 같은 패턴입니다. 외부 데이터의 자연 키(배송번호, 거래번호 등)를 기준으로 있으면 갱신, 없으면 신규 저장합니다.</p>
+<pre><code class="language-text">배송번호 기준으로 기존 데이터 확인
+이미 있으면 → 상태만 업데이트
+없으면 → 신규 저장</code></pre>
+<blockquote>
+<p>💡 원본(raw)을 먼저 저장해 두면, 변환 로직이 바뀌었을 때 API를 다시 호출하지 않고 저장된 원본으로 재변환할 수 있습니다. 외부 호출은 비싸고 제한이 있으므로, 한 번 받은 데이터는 보존하는 편이 좋습니다.</p>
+</blockquote>
+<blockquote>
+<p>🧪 <strong>실습 — 환율 정보 수집</strong></p>
+<ol>
+  <li value="1">환율을 돌려주는 외부 API(또는 목 서버)를 정해, 호출 클라이언트를 만듭니다.</li>
+  <li value="2">일시적 실패를 흉내 내도록 클라이언트가 가끔 <code>ApiTemporaryException</code>을 던지게 합니다.</li>
+  <li value="3">Retry(3회)를 건 Step으로 수집 Job을 실행하고, 일시적 실패가 재시도 끝에 성공하는지 확인합니다.</li>
+  <li value="4">같은 날짜 환율을 다시 수집해도 중복 저장되지 않고 갱신되는지 확인합니다.</li>
+</ol>
+</blockquote>
+<hr/>
+<p class="my_h2">이 장의 요점</p>
+<ul>
+  <li>외부 API 수집은 Custom ItemReader로 호출하고, <code>read()</code>가 <code>null</code>을 반환할 때까지 한 건씩 내보냅니다.</li>
+  <li>Retry는 일시적 오류(타임아웃·503·일시 제한)에만 걸고, 영구적 오류(401·400)는 재시도하지 않습니다. backoff와 호출량 조절을 함께 둡니다.</li>
+  <li>수집/변환/반영 Step을 분리하고 원본을 보존하며, 자연 키 기준으로 중복 저장을 막습니다.</li>
+</ul>
+<hr/>
+<p><strong>다음 장에서는</strong> 반대 방향, 즉 내부 DB 데이터를 외부 검색 엔진으로 내보내는 사례를 다룹니다. Custom Writer와 전체 재색인 vs 증분 색인의 선택이 주제입니다.</p>
+
+</body>
+</html>

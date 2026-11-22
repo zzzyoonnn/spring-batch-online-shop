@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"
+  "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <title></title>
+  <link href="../Styles/Style0001.css" rel="stylesheet" type="text/css"/>
+</head>
+
+<body>
+<h2 class="disp_none">부록 D. 용어집</h2>
+<p class="my_h1">부록 D. 용어집</p>
+<p>이 책에서 쓰인 핵심 용어를 가나다순으로 정리합니다. (처음 다룬 장 표기)</p>
+<table>
+  <thead>
+    <tr><th>용어</th><th>영문</th><th>뜻</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>멱등성</td><td>idempotency</td><td>같은 작업을 여러 번 해도 결과가 한 번 한 것과 같은 성질. 정산·통계·알림 배치의 핵심 (7장)</td></tr>
+    <tr><td>메타테이블</td><td>metadata tables</td><td>Spring Batch가 Job·Step 실행 상태를 기록하는 <code>BATCH_*</code> 테이블. 재시작·이력의 근거 (2·17장, 부록 A)</td></tr>
+    <tr><td>배치</td><td>batch</td><td>대량 데이터를 규칙에 따라 한꺼번에 처리하는 자동화 작업 (1장)</td></tr>
+    <tr><td>벌크 API</td><td>bulk API</td><td>여러 건을 한 요청으로 처리하는 외부 시스템 API. 검색 색인 등에 사용 (14장)</td></tr>
+    <tr><td>부수효과</td><td>side effect</td><td>함수가 값 반환 외에 외부 상태를 바꾸는 것. Skip 재처리 시 중복될 수 있어 주의 (15장)</td></tr>
+    <tr><td>스킵</td><td>Skip</td><td>처리 중 오류 난 아이템을 건너뛰고 계속 진행하는 것. 한도(skipLimit)와 함께 사용 (5·15장)</td></tr>
+    <tr><td>재시도</td><td>Retry</td><td>일시적 오류가 난 아이템을 정해진 횟수만큼 다시 시도하는 것 (13·15장)</td></tr>
+    <tr><td>재시작</td><td>restart</td><td>실패한 Job을 같은 파라미터로 다시 실행해 실패 지점부터 이어 가는 것 (17장)</td></tr>
+    <tr><td>잡</td><td>Job</td><td>의미 있는 배치 작업 한 덩어리. 여러 Step으로 구성 (3장)</td></tr>
+    <tr><td>잡 파라미터</td><td>JobParameters</td><td>Job 실행 기준을 외부에서 주입하는 값(기준일·파일명 등). 멱등성의 출발점 (4·7장)</td></tr>
+    <tr><td>청크</td><td>Chunk</td><td>Step 안에서 한 번에 커밋하는 데이터 묶음. &quot;작게 나눠 처리하기&quot;의 실체 (3장)</td></tr>
+    <tr><td>커서</td><td>cursor</td><td>DB 결과를 한 행씩 스트리밍으로 읽는 방식. <code>JdbcCursorItemReader</code> (부록 B)</td></tr>
+    <tr><td>파티셔닝</td><td>partitioning</td><td>데이터를 겹치지 않는 구간으로 나눠 병렬 처리하는 확장 방식 (16장)</td></tr>
+    <tr><td>페이징</td><td>paging</td><td>DB를 페이지 단위로 끊어 읽는 방식. <code>JdbcPagingItemReader</code> (6장)</td></tr>
+    <tr><td>프로세서</td><td>ItemProcessor</td><td>읽은 아이템을 가공·검증·변환하는 단계. <code>null</code> 반환 시 필터링 (3·5장)</td></tr>
+    <tr><td>리더</td><td>ItemReader</td><td>데이터를 한 건씩 읽어 오는 단계. 파일·DB·API 등 (3장)</td></tr>
+    <tr><td>라이터</td><td>ItemWriter</td><td>가공된 Chunk를 한꺼번에 저장·전달하는 단계 (3장)</td></tr>
+    <tr><td>스텝</td><td>Step</td><td>Job을 이루는 한 단계. Tasklet 또는 Chunk 기반 (3장)</td></tr>
+    <tr><td>태스클릿</td><td>Tasklet</td><td>한 번 실행하고 끝나는 단순 작업용 Step 방식 (3장)</td></tr>
+    <tr><td>페이지 크기</td><td>pageSize</td><td>페이징 Reader가 한 번에 읽는 행 수 (6·16장)</td></tr>
+    <tr><td>폴트 톨러런트</td><td>fault-tolerant</td><td>Skip·Retry를 활성화한 Step 설정. <code>faultTolerant()</code> (5·15장)</td></tr>
+    <tr><td>잡 런처</td><td>JobLauncher</td><td>Job과 파라미터를 받아 실행하는 컴포넌트 (4장)</td></tr>
+    <tr><td>잡 익스플로러</td><td>JobExplorer</td><td>메타테이블을 읽어 실행 이력을 조회하는 API (4·17장)</td></tr>
+    <tr><td>스텝 스코프</td><td>@StepScope</td><td>Step 실행 시점에 빈을 생성해 JobParameters를 주입받게 하는 스코프 (5장)</td></tr>
+  </tbody>
+</table>
+
+</body>
+</html>

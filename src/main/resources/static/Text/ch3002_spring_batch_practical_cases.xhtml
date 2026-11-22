@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"
+  "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <title></title>
+  <link href="../Styles/Style0001.css" rel="stylesheet" type="text/css"/>
+</head>
+
+<body>
+<h2 class="disp_none">부록 B. Reader/Writer 구성 조합 치트시트</h2>
+<p class="my_h1">부록 B. Reader/Writer 구성 조합 치트시트</p>
+<p>사례 대부분은 입력원과 출력처를 갈아 끼우는 것으로 만들어집니다. 자주 쓰는 조합을 정리합니다. (처음 다룬 장은 각 항목에 표기)</p>
+<p class="my_h2">흐름별 조합</p>
+<p class="my_h3">파일 → DB (5장)</p>
+<pre><code class="language-text">FlatFileItemReader   (CSV/고정폭 텍스트 읽기)
+ → ItemProcessor      (검증·변환)
+ → JdbcBatchItemWriter (대량 INSERT)</code></pre>
+<p>사용 사례: CSV 상품 등록, 엑셀 회원 업로드, 거래처 목록 등록</p>
+<p class="my_h3">DB → DB (6·7·8장)</p>
+<pre><code class="language-text">JdbcPagingItemReader  (페이지 단위로 안전하게 읽기)
+ → ItemProcessor
+ → JdbcBatchItemWriter</code></pre>
+<p>사용 사례: 정산, 통계 집계, 데이터 보정, 마이그레이션</p>
+<p class="my_h3">DB → API/검색엔진 (14장)</p>
+<pre><code class="language-text">JdbcPagingItemReader
+ → ItemProcessor       (검색 문서로 변환)
+ → Custom ItemWriter   (bulk API 전송)</code></pre>
+<p>사용 사례: 검색 엔진 색인, 외부 CRM 동기화, 알림 시스템 전달</p>
+<p class="my_h3">API → DB (13장)</p>
+<pre><code class="language-text">Custom ItemReader     (외부 API 호출, read()가 null이면 종료)
+ → ItemProcessor
+ → JpaItemWriter / JdbcBatchItemWriter</code></pre>
+<p>사용 사례: 배송 상태 수집, 환율 정보 수집, 공공데이터 수집</p>
+<p class="my_h2">주요 Reader</p>
+<table>
+  <thead>
+    <tr><th>Reader</th><th>용도</th><th>메모</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>FlatFileItemReader</code></td><td>CSV·텍스트 파일</td><td><code>linesToSkip</code>로 헤더 처리, <code>@StepScope</code>로 파일 경로 주입</td></tr>
+    <tr><td><code>JdbcPagingItemReader</code></td><td>대량 DB 조회</td><td>유니크 정렬 키 필수, <code>pageSize</code> 지정</td></tr>
+    <tr><td><code>JdbcCursorItemReader</code></td><td>DB 커서 조회</td><td>단일 커넥션 유지, 멀티스레드엔 부적합</td></tr>
+    <tr><td><code>JpaPagingItemReader</code></td><td>JPA 기반 페이징</td><td>영속성 컨텍스트 주의</td></tr>
+    <tr><td>Custom <code>ItemReader</code></td><td>API 등 비표준 입력</td><td><code>read()</code>가 <code>null</code>이면 읽기 종료</td></tr>
+  </tbody>
+</table>
+<p class="my_h2">주요 Writer</p>
+<table>
+  <thead>
+    <tr><th>Writer</th><th>용도</th><th>메모</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>JdbcBatchItemWriter</code></td><td>대량 INSERT/UPDATE</td><td>배치 SQL, 빠름</td></tr>
+    <tr><td><code>JpaItemWriter</code></td><td>JPA 엔티티 저장</td><td>영속성 컨텍스트로 flush</td></tr>
+    <tr><td><code>FlatFileItemWriter</code></td><td>파일 출력</td><td>리포트·내보내기</td></tr>
+    <tr><td>Custom <code>ItemWriter</code></td><td>API·검색엔진 전송</td><td><code>write(Chunk&lt;T&gt;)</code>로 묶음 받아 bulk 전송</td></tr>
+  </tbody>
+</table>
+<p class="my_h2">핵심 빌더 골격 (Spring Batch 5)</p>
+<pre><code class="language-java"><span class="hl-comment">// Step</span>
+<span class="hl-keyword">new</span> <span class="hl-class">StepBuilder</span>(<span class="hl-string">&quot;name&quot;</span>, jobRepository)
+    .&lt;<span class="hl-class">In</span>, <span class="hl-class">Out</span>&gt;<span class="hl-method">chunk</span>(<span class="hl-number">500</span>, transactionManager)
+    .<span class="hl-method">reader</span>(<span class="hl-method">reader</span>()).<span class="hl-method">processor</span>(<span class="hl-method">processor</span>()).<span class="hl-method">writer</span>(<span class="hl-method">writer</span>())
+    .<span class="hl-method">faultTolerant</span>().<span class="hl-method">retry</span>(...).<span class="hl-method">retryLimit</span>(<span class="hl-number">3</span>).<span class="hl-method">skip</span>(...).<span class="hl-method">skipLimit</span>(<span class="hl-number">100</span>)
+    .<span class="hl-method">build</span>();
+
+<span class="hl-comment">// Job</span>
+<span class="hl-keyword">new</span> <span class="hl-class">JobBuilder</span>(<span class="hl-string">&quot;name&quot;</span>, jobRepository)
+    .<span class="hl-method">start</span>(<span class="hl-method">step1</span>()).<span class="hl-method">next</span>(<span class="hl-method">step2</span>())
+    .<span class="hl-method">build</span>();</code></pre>
+<blockquote>
+<p>💡 <code>@StepScope</code> + <code>@Value(&quot;#{jobParameters[&#39;key&#39;]}&quot;)</code> 조합으로 파일 경로·기준일 등 실행마다 달라지는 입력을 주입합니다(5·7·8장).</p>
+</blockquote>
+
+</body>
+</html>

@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"
+  "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <title></title>
+  <link href="../Styles/Style0001.css" rel="stylesheet" type="text/css"/>
+</head>
+
+<body>
+<h2 class="disp_none">부록 C. 실무 배치 설계 체크리스트</h2>
+<p class="my_h1">부록 C. 실무 배치 설계 체크리스트</p>
+<p>새 배치를 만들기 전, 그리고 운영에 올리기 전 점검하는 목록입니다. (근거 장 표기)</p>
+<p class="my_h2">1. 시작 전 — 이 작업에 배치가 맞는가 (1장)</p>
+<ul>
+  <li>[ ] 대량 데이터를 다루는가?</li>
+  <li>[ ] 정해진 시각에 반복 실행되는가?</li>
+  <li>[ ] 실패 시 재시작·재처리가 중요한가?</li>
+  <li>[ ] 처리 이력을 남겨야 하는가?</li>
+  <li>[ ] → 대부분 &quot;아니오&quot;라면 <code>@Scheduled</code>만으로 충분할 수 있다.</li>
+</ul>
+<p class="my_h2">2. JobParameter — 실행 기준이 명확한가 (4·7·8·17장)</p>
+<ul>
+  <li>[ ] 기준일·파일명·대상 ID 등 실행 기준을 파라미터로 받는가?</li>
+  <li>[ ] 배치 내부에서 <code>LocalDate.now()</code>로 날짜를 다시 구하지 않는가? (밖에서 주입)</li>
+  <li>[ ] 재시작이 필요한 Job에 매번 바뀌는 값(<code>runAt</code> 등)을 넣지 않았는가?</li>
+</ul>
+<pre><code class="language-text">date=2026-06-29
+fileName=products_20260629.csv
+sellerId=1004</code></pre>
+<p class="my_h2">3. 멱등성 — 두 번 돌려도 안전한가 (7·8·10장)</p>
+<ul>
+  <li>[ ] 같은 Job을 두 번 실행해도 결과가 망가지지 않는가?</li>
+  <li>[ ] 중복 방지 방법을 갖췄는가?</li>
+  <li>[ ] 기준일 파라미터로 중복 실행 차단</li>
+  <li>[ ] DB UNIQUE 제약 (마지막 방어선)</li>
+  <li>[ ] 삭제 후 재생성 또는 upsert</li>
+  <li>[ ] 상태값 기반 처리 (이미 확정된 데이터 보호)</li>
+</ul>
+<p class="my_h2">4. Chunk Size — 얼마씩 커밋하는가 (3·12·16장)</p>
+<ul>
+  <li>[ ] 청크 크기를 정했는가? (보통 100~1,000)</li>
+  <li>[ ] 너무 작아 커밋이 잦지 않은가 / 너무 커서 롤백·메모리 부담이 크지 않은가?</li>
+  <li>[ ] 페이징 Reader라면 <code>pageSize</code>와 맞췄는가?</li>
+</ul>
+<p class="my_h2">5. Skip / Retry — 오류를 어떻게 다루는가 (5·13·15장)</p>
+<ul>
+  <li>[ ] 일시적 오류(타임아웃·503)는 Retry로 처리하는가?</li>
+  <li>[ ] 데이터 오류 중 건너뛰어도 되는 것은 Skip + 리포트로 남기는가?</li>
+  <li>[ ] 정확성이 생명인 데이터는 Skip하지 않고 Fail시키는가?</li>
+  <li>[ ] <code>skipLimit</code>이 합리적인가? (절반이 실패해도 성공으로 끝나지 않게)</li>
+  <li>[ ] 영구적 오류(401·400)를 재시도하고 있지 않은가?</li>
+</ul>
+<p class="my_h2">6. Step 분리 — 단계를 나눴는가 (6·9·13장)</p>
+<ul>
+  <li>[ ] 성격이 다른 작업(조회/변경/발송)을 별도 Step으로 나눴는가?</li>
+  <li>[ ] 위험한 작업(삭제·보정) 앞에 백업·검증 Step을 뒀는가?</li>
+  <li>[ ] 외부 발송은 배치가 직접 하지 않고 대상 테이블/큐에 넘기는가?</li>
+</ul>
+<p class="my_h2">7. 안전성 — 되돌릴 수 있는가 (6·12장)</p>
+<ul>
+  <li>[ ] 삭제·보정 전에 원본을 백업/아카이브하는가?</li>
+  <li>[ ] 대량 삭제를 한 번에 하지 않고 Chunk로 나누는가?</li>
+  <li>[ ] 운영 적용 전 대상 건수를 미리 확인하는가?</li>
+</ul>
+<p class="my_h2">8. 운영 — 추적·대응이 되는가 (17장)</p>
+<ul>
+  <li>[ ] 스케줄러(<code>@Scheduled</code>)로 자동 실행되는가?</li>
+  <li>[ ] 실패 시 알림이 오는가?</li>
+  <li>[ ] 실행 이력(상태·건수)을 화면/메타테이블로 확인할 수 있는가?</li>
+  <li>[ ] 실패한 Job을 재시작 또는 안전하게 재실행할 수 있는가?</li>
+</ul>
+<p class="my_h2">9. 성능 — 측정 후 확장하는가 (16장)</p>
+<ul>
+  <li>[ ] 먼저 단일 스레드로 측정했는가?</li>
+  <li>[ ] 병목(Reader/Processor/Writer)을 확인했는가?</li>
+  <li>[ ] 청크 크기 튜닝을 먼저 시도했는가?</li>
+  <li>[ ] 정말 필요할 때만 멀티스레드·파티셔닝을 도입하는가?</li>
+</ul>
+<hr/>
+<blockquote>
+<p>📌 모든 항목은 결국 한 문장으로 모입니다 — <strong>&quot;한 번에 다 하지 말고, 작게 나눠 처리하고, 다시 돌려도 안전하게.&quot;</strong></p>
+</blockquote>
+
+</body>
+</html>

@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"
+  "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <title></title>
+  <link href="../Styles/Style0001.css" rel="stylesheet" type="text/css"/>
+</head>
+
+<body>
+<h2 class="disp_none">6장. DB 마이그레이션과 데이터 보정</h2>
+<p class="my_h1">6장. DB 마이그레이션과 데이터 보정</p>
+<blockquote>
+<p><strong>이 장에서 배우는 것</strong></p>
+<ul>
+  <li>JdbcPagingItemReader로 대량 DB 데이터를 구간 단위로 안전하게 읽기</li>
+  <li>변경 전 백업 → 검증 → 반영의 보정 배치 흐름</li>
+  <li>운영 DB를 직접 고치는 작업에서 사고를 줄이는 설계 원칙</li>
+</ul>
+</blockquote>
+<hr/>
+<p class="my_h2">6.1 사례 이해: 한 번에 안 끝나는 작업</p>
+<p>기존 시스템의 데이터를 새 구조로 옮기거나, 잘못 저장된 데이터를 일괄 보정하는 일은 한 번에 끝나지 않습니다. 중간에 실패할 수 있고, 특정 구간만 다시 처리해야 할 수도 있습니다.</p>
+<pre><code class="language-text">레거시 회원 테이블 조회
+ → 새 회원 정책에 맞게 변환
+ → 신규 테이블 저장</code></pre>
+<p>이런 업무가 모두 여기에 해당합니다.</p>
+<pre><code class="language-text">레거시 DB → 신규 DB 이관
+주소 데이터 정규화
+전화번호 포맷 통일 (010-1234-5678)
+암호화되지 않은 개인정보 암호화
+잘못된 상태값 보정
+기존 주문 데이터 재분류</code></pre>
+<blockquote>
+<p>📌 <strong>핵심:</strong> 마이그레이션·보정 배치의 본질은 &quot;구간을 나눠, 실패하면 그 구간만 다시 돌리는 것&quot;입니다. 전체를 한 트랜잭션에 묶는 순간 재시작이 불가능해집니다.</p>
+</blockquote>
+<hr/>
+<p class="my_h2">6.2 Reader: JdbcPagingItemReader로 구간 나누기</p>
+<p>대량 DB를 읽을 때 <code>SELECT * FROM member</code>를 한 번에 메모리로 올리면 위험합니다. <strong><code>JdbcPagingItemReader</code></strong>는 정렬 키를 기준으로 페이지 단위로 끊어 읽어, 수백만 건도 일정한 메모리로 처리합니다.</p>
+<pre><code class="language-java"><span class="hl-annotation">@Bean</span>
+<span class="hl-keyword">public</span> <span class="hl-class">JdbcPagingItemReader</span>&lt;<span class="hl-class">LegacyMember</span>&gt; <span class="hl-method">legacyMemberReader</span>(<span class="hl-class">DataSource</span> dataSource) {
+    <span class="hl-class">Map</span>&lt;<span class="hl-class">String</span>, <span class="hl-class">Order</span>&gt; sortKeys = <span class="hl-keyword">new</span> <span class="hl-class">LinkedHashMap</span>&lt;&gt;();
+    sortKeys.<span class="hl-method">put</span>(<span class="hl-string">&quot;id&quot;</span>, <span class="hl-class">Order</span>.ASCENDING); <span class="hl-comment">// 반드시 유니크하고 정렬 가능한 키</span>
+
+    <span class="hl-keyword">return</span> <span class="hl-keyword">new</span> <span class="hl-class">JdbcPagingItemReaderBuilder</span>&lt;<span class="hl-class">LegacyMember</span>&gt;()
+            .<span class="hl-method">name</span>(<span class="hl-string">&quot;legacyMemberReader&quot;</span>)
+            .<span class="hl-method">dataSource</span>(dataSource)
+            .<span class="hl-method">selectClause</span>(<span class="hl-string">&quot;SELECT id, name, phone, address&quot;</span>)
+            .<span class="hl-method">fromClause</span>(<span class="hl-string">&quot;FROM legacy_member&quot;</span>)
+            .<span class="hl-method">whereClause</span>(<span class="hl-string">&quot;WHERE migrated = false&quot;</span>)
+            .<span class="hl-method">sortKeys</span>(sortKeys)
+            .<span class="hl-method">pageSize</span>(<span class="hl-number">1000</span>)
+            .<span class="hl-method">rowMapper</span>((rs, n) -&gt; <span class="hl-keyword">new</span> <span class="hl-class">LegacyMember</span>(
+                    rs.<span class="hl-method">getLong</span>(<span class="hl-string">&quot;id&quot;</span>), rs.<span class="hl-method">getString</span>(<span class="hl-string">&quot;name&quot;</span>),
+                    rs.<span class="hl-method">getString</span>(<span class="hl-string">&quot;phone&quot;</span>), rs.<span class="hl-method">getString</span>(<span class="hl-string">&quot;address&quot;</span>)))
+            .<span class="hl-method">build</span>();
+}</code></pre>
+<blockquote>
+<p>💡 정렬 키는 <strong>유니크하고 변하지 않는 값</strong>(보통 PK)이어야 합니다. 중복되거나 중간에 바뀌는 값을 키로 쓰면 페이지 경계에서 데이터가 빠지거나 중복 처리될 수 있습니다.</p>
+</blockquote>
+<p><code>whereClause</code>에 <code>migrated = false</code>를 둔 것도 중요합니다. 이미 옮긴 데이터는 다시 읽지 않으므로, 배치가 중간에 멈췄다 다시 시작해도 <strong>이어서 처리</strong>됩니다. 이것이 DB→DB 배치에서 멱등성을 만드는 가장 간단한 방법입니다.</p>
+<hr/>
+<p class="my_h2">6.3 Processor: 변환과 보정 규칙</p>
+<p>전화번호 포맷 통일을 예로 들겠습니다. <code>01012345678</code>, <code>010-1234-5678</code>, <code>+82 10 1234 5678</code>처럼 제각각인 값을 한 형식으로 정규화합니다.</p>
+<pre><code class="language-java"><span class="hl-annotation">@Component</span>
+<span class="hl-keyword">public</span> <span class="hl-keyword">class</span> <span class="hl-class">MemberMigrationProcessor</span>
+        <span class="hl-keyword">implements</span> <span class="hl-class">ItemProcessor</span>&lt;<span class="hl-class">LegacyMember</span>, <span class="hl-class">Member</span>&gt; {
+
+    <span class="hl-annotation">@Override</span>
+    <span class="hl-keyword">public</span> <span class="hl-class">Member</span> <span class="hl-method">process</span>(<span class="hl-class">LegacyMember</span> src) {
+        <span class="hl-class">String</span> phone = <span class="hl-method">normalizePhone</span>(src.<span class="hl-method">getPhone</span>()); <span class="hl-comment">// 010-1234-5678 형태로</span>
+        <span class="hl-class">String</span> address = <span class="hl-method">normalizeAddress</span>(src.<span class="hl-method">getAddress</span>());
+        <span class="hl-keyword">return</span> <span class="hl-class">Member</span>.<span class="hl-method">migratedOf</span>(src.<span class="hl-method">getId</span>(), src.<span class="hl-method">getName</span>(), phone, address);
+    }
+}</code></pre>
+<blockquote>
+<p>⚠️ 변환 규칙이 모든 데이터를 다 처리하지 못하는 경우를 늘 가정하세요. 정규화가 불가능한 값(예: 자릿수가 안 맞는 전화번호)은 예외로 던져 Skip하고 별도 리포트로 남기면, 사람이 수작업으로 확인할 수 있습니다(5장 패턴과 동일).</p>
+</blockquote>
+<hr/>
+<p class="my_h2">6.4 안전한 보정의 5단계</p>
+<p>운영 DB를 직접 수정하는 보정 배치는 특히 조심해야 합니다. 권장 흐름은 다음과 같으며, 각 단계를 Step으로 나누면 장애 분석과 재실행이 쉬워집니다.</p>
+<pre><code class="language-text">1. 대상 데이터 조회        Step 1
+2. 변경 전 값 백업          Step 2  (예: member_backup 테이블에 원본 복사)
+3. 변경 예정 결과 검증       Step 3  (샘플 비교·건수 확인)
+4. 실제 반영               Step 4
+5. 반영 결과 리포트 생성     Step 5</code></pre>
+<pre><code class="language-java"><span class="hl-annotation">@Bean</span>
+<span class="hl-keyword">public</span> <span class="hl-class">Job</span> <span class="hl-method">memberMigrationJob</span>() {
+    <span class="hl-keyword">return</span> <span class="hl-keyword">new</span> <span class="hl-class">JobBuilder</span>(<span class="hl-string">&quot;memberMigrationJob&quot;</span>, jobRepository)
+            .<span class="hl-method">start</span>(<span class="hl-method">backupStep</span>())     <span class="hl-comment">// 2. 원본 백업</span>
+            .<span class="hl-method">next</span>(<span class="hl-method">migrateStep</span>())     <span class="hl-comment">// 4. 변환·반영 (Reader→Processor→Writer)</span>
+            .<span class="hl-method">next</span>(<span class="hl-method">reportStep</span>())      <span class="hl-comment">// 5. 결과 리포트</span>
+            .<span class="hl-method">build</span>();
+}</code></pre>
+<blockquote>
+<p>💡 백업 Step을 앞에 두면, 보정 결과가 잘못됐을 때 백업 테이블로 되돌릴 수 있습니다. &quot;되돌릴 수 있는가?&quot;는 운영 배치를 만들 때 항상 던져야 할 질문입니다.</p>
+</blockquote>
+<hr/>
+<p class="my_h2">6.5 구간을 나눠 여러 번 돌리기</p>
+<p>수백만 건이라면 한 번에 다 돌리기보다, ID 구간을 파라미터로 나눠 여러 번 실행하는 편이 운영하기 좋습니다.</p>
+<pre><code class="language-text">memberMigrationJob fromId=1       toId=100000
+memberMigrationJob fromId=100001  toId=200000
+memberMigrationJob fromId=200001  toId=300000</code></pre>
+<p><code>whereClause</code>를 <code>WHERE id BETWEEN :fromId AND :toId</code>로 두고 파라미터를 주입하면, 한 구간이 실패해도 그 구간만 다시 돌리면 됩니다. 새벽 시간대를 나눠 부하를 분산할 수도 있습니다.</p>
+<blockquote>
+<p>⚠️ 구간 분할 배치는 구간이 겹치거나 빠지지 않도록 경계를 명확히 하세요. <code>BETWEEN</code>은 양 끝을 포함하므로, 다음 구간은 반드시 <code>이전 toId + 1</code>부터 시작해야 합니다.</p>
+</blockquote>
+<blockquote>
+<p>🧪 <strong>실습 — 전화번호 정규화 보정</strong></p>
+<ol>
+  <li value="1"><code>legacy_member</code>에 다양한 포맷의 전화번호 샘플 30건을 넣습니다(일부는 정규화 불가능한 깨진 값).</li>
+  <li value="2">백업 → 변환 → 리포트 3-Step Job을 구성하고 콘솔에서 실행합니다.</li>
+  <li value="3"><code>member_backup</code>에 원본이 남았는지, <code>member</code>에 정규화된 값이 들어갔는지, 깨진 값은 Skip되어 리포트에 남았는지 확인합니다.</li>
+  <li value="4"><code>migrated</code> 플래그를 활용해, 절반쯤 처리된 상태에서 다시 실행해도 중복 처리되지 않음을 확인합니다.</li>
+</ol>
+</blockquote>
+<hr/>
+<p class="my_h2">이 장의 요점</p>
+<ul>
+  <li><code>JdbcPagingItemReader</code>로 정렬 키 기준 페이지 단위로 읽으면, 수백만 건도 일정한 메모리로 안전하게 처리합니다.</li>
+  <li><code>migrated</code> 플래그나 ID 구간(<code>fromId</code>~<code>toId</code>)으로 처리 범위를 제어하면, 중간에 멈춰도 이어서·다시 돌려도 안전합니다.</li>
+  <li>운영 DB 보정은 &quot;백업 → 검증 → 반영 → 리포트&quot;로 Step을 나눠, 되돌릴 수 있고 추적 가능하게 만듭니다.</li>
+</ul>
+<hr/>
+<p><strong>다음 장에서는</strong> 정확성이 생명인 사례, 매일 새벽 정산 배치로 들어갑니다. 같은 날짜를 두 번 돌려도 정산금이 두 배가 되지 않게 하는 멱등성 설계가 이 장의 주인공입니다.</p>
+
+</body>
+</html>

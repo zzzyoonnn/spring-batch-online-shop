@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"
+  "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <title></title>
+  <link href="../Styles/Style0001.css" rel="stylesheet" type="text/css"/>
+</head>
+
+<body>
+<h2 class="disp_none">14장. 검색 인덱스 동기화</h2>
+<p class="my_h1">14장. 검색 인덱스 동기화</p>
+<blockquote>
+<p><strong>이 장에서 배우는 것</strong></p>
+<ul>
+  <li>DB 데이터를 검색 엔진으로 내보내는 Custom ItemWriter 만들기</li>
+  <li>전체 재색인과 증분 색인을 분리해야 하는 이유</li>
+  <li>대량 색인을 일정 크기로 나눠 안정적으로 보내기</li>
+</ul>
+</blockquote>
+<hr/>
+<p class="my_h2">14.1 사례 이해: DB와 검색 엔진 맞추기</p>
+<p>검색 기능이 있는 서비스는 DB 데이터를 Elasticsearch·OpenSearch 같은 검색 엔진에 동기화합니다.</p>
+<pre><code class="language-text">게시글/상품 DB 조회
+ → 검색 문서 형태로 변환
+ → 검색 엔진에 색인(index)</code></pre>
+<p>상품 검색 인덱스 재생성, 게시글 재색인, 사용자 검색 인덱스 동기화, 추천 시스템용 데이터 생성이 모두 이 사례입니다.</p>
+<blockquote>
+<p>📌 <strong>핵심:</strong> 검색 엔진은 DB의 사본입니다. 둘이 어긋나면 &quot;DB엔 있는데 검색은 안 되는&quot; 문제가 생깁니다. 배치가 이 둘을 주기적으로 맞춥니다.</p>
+</blockquote>
+<hr/>
+<p class="my_h2">14.2 전체 재색인 vs 증분 색인</p>
+<p>두 가지를 분리하는 것이 이 사례의 핵심 설계입니다.</p>
+<pre><code class="language-text">전체 재색인 (full):
+  모든 상품을 처음부터 다시 색인
+  - 매핑/분석기 변경, 장애 복구, 데이터 정합성 회복 시
+  - 무겁지만 가장 확실하다
+
+증분 색인 (incremental):
+  최근 수정된 상품만 색인
+  - 평상시 주기적 동기화
+  - 가볍고 빠르다</code></pre>
+<p>평소에는 증분 색인으로 가볍게 따라가고, 검색 정책이 바뀌거나 인덱스가 깨졌을 때 전체 재색인으로 통째로 다시 만듭니다.</p>
+<pre><code class="language-java"><span class="hl-annotation">@Bean</span>
+<span class="hl-annotation">@StepScope</span>
+<span class="hl-keyword">public</span> <span class="hl-class">JdbcPagingItemReader</span>&lt;<span class="hl-class">Product</span>&gt; <span class="hl-method">indexTargetReader</span>(
+        <span class="hl-annotation">@Value</span>(<span class="hl-string">&quot;#{jobParameters[&#39;mode&#39;]}&quot;</span>) <span class="hl-class">String</span> mode,
+        <span class="hl-annotation">@Value</span>(<span class="hl-string">&quot;#{jobParameters[&#39;since&#39;]}&quot;</span>) <span class="hl-class">String</span> since) {
+    <span class="hl-comment">// mode=full      → 전체 (WHERE 1=1)</span>
+    <span class="hl-comment">// mode=incremental → WHERE updated_at &gt;= :since</span>
+    <span class="hl-comment">// ...</span>
+}</code></pre>
+<blockquote>
+<p>💡 증분 색인의 <code>since</code>는 11장의 증분 처리와 같은 아이디어입니다. &quot;마지막으로 색인한 시각&quot; 이후 수정된 행만 골라 보냅니다.</p>
+</blockquote>
+<hr/>
+<p class="my_h2">14.3 Custom ItemWriter로 색인 보내기</p>
+<p>검색 엔진 색인은 Custom <code>ItemWriter</code>로 구현합니다. Writer는 Chunk(묶음)를 받으므로, 검색 엔진의 <strong>벌크(bulk) API</strong>로 한 번에 여러 문서를 보내면 효율적입니다.</p>
+<pre><code class="language-java"><span class="hl-annotation">@Component</span>
+<span class="hl-annotation">@RequiredArgsConstructor</span>
+<span class="hl-keyword">public</span> <span class="hl-keyword">class</span> <span class="hl-class">ProductSearchWriter</span> <span class="hl-keyword">implements</span> <span class="hl-class">ItemWriter</span>&lt;<span class="hl-class">SearchDocument</span>&gt; {
+
+    <span class="hl-keyword">private</span> <span class="hl-keyword">final</span> <span class="hl-class">SearchClient</span> searchClient;
+
+    <span class="hl-annotation">@Override</span>
+    <span class="hl-keyword">public</span> <span class="hl-keyword">void</span> <span class="hl-method">write</span>(<span class="hl-class">Chunk</span>&lt;? <span class="hl-keyword">extends</span> <span class="hl-class">SearchDocument</span>&gt; chunk) {
+        <span class="hl-comment">// chunk.getItems()를 한 번의 bulk 요청으로 색인</span>
+        searchClient.<span class="hl-method">bulkIndex</span>(chunk.<span class="hl-method">getItems</span>());
+    }
+}</code></pre>
+<blockquote>
+<p>💡 Spring Batch 5에서 <code>ItemWriter.write()</code>는 <code>List</code>가 아니라 <code>Chunk&lt;T&gt;</code>를 받습니다. <code>chunk.getItems()</code>로 묶음을 꺼내 검색 엔진 bulk API에 그대로 넘기면, 1건씩 보내는 것보다 훨씬 빠릅니다.</p>
+</blockquote>
+<p>Processor는 DB 엔티티를 검색 문서로 변환합니다.</p>
+<pre><code class="language-java"><span class="hl-annotation">@Component</span>
+<span class="hl-keyword">public</span> <span class="hl-keyword">class</span> <span class="hl-class">ProductDocProcessor</span> <span class="hl-keyword">implements</span> <span class="hl-class">ItemProcessor</span>&lt;<span class="hl-class">Product</span>, <span class="hl-class">SearchDocument</span>&gt; {
+    <span class="hl-annotation">@Override</span>
+    <span class="hl-keyword">public</span> <span class="hl-class">SearchDocument</span> <span class="hl-method">process</span>(<span class="hl-class">Product</span> p) {
+        <span class="hl-keyword">return</span> <span class="hl-class">SearchDocument</span>.<span class="hl-method">builder</span>()
+                .<span class="hl-method">id</span>(p.<span class="hl-method">getId</span>())
+                .<span class="hl-method">name</span>(p.<span class="hl-method">getName</span>())
+                .<span class="hl-method">categoryCode</span>(p.<span class="hl-method">getCategoryCode</span>())
+                .<span class="hl-method">price</span>(p.<span class="hl-method">getPrice</span>())
+                .<span class="hl-method">build</span>();
+    }
+}</code></pre>
+<hr/>
+<p class="my_h2">14.4 안정적으로 대량 색인하기</p>
+<p>수백만 건을 한 번에 보내면 검색 엔진이 과부하에 빠집니다. Chunk 크기로 한 번에 보내는 양을 조절하고, 전체 재색인은 무중단으로 하려면 <strong>새 인덱스에 색인 후 별칭(alias)을 전환</strong>하는 방식을 씁니다.</p>
+<pre><code class="language-text">1. product_v2 인덱스에 전체 색인 (서비스는 여전히 product_v1 조회)
+2. 색인 완료 후 alias를 product_v1 → product_v2로 전환
+3. product_v1 제거</code></pre>
+<p>이렇게 하면 재색인 중에도 검색이 멈추지 않고, 실패하면 기존 인덱스를 그대로 두면 됩니다.</p>
+<blockquote>
+<p>⚠️ 색인 도중 실패에 대비해, 어디까지 보냈는지 추적할 수 있어야 합니다. 증분 색인은 처리 완료 시각을 기록해 다음 실행이 이어받게 하고, 전체 재색인은 별칭 전환 방식으로 &quot;완성된 인덱스로만 전환&quot;되게 합니다. 검색 엔진별 구체적 API는 공식 문서로 확인하세요.</p>
+</blockquote>
+<blockquote>
+<p>🧪 <strong>실습 — 상품 증분 색인</strong></p>
+<ol>
+  <li value="1"><code>product</code> 테이블과 검색 엔진(또는 목 클라이언트)을 준비합니다.</li>
+  <li value="2"><code>mode=full</code>로 전체 색인 Job을 돌려 초기 인덱스를 만듭니다.</li>
+  <li value="3">상품 몇 건을 수정하고 <code>mode=incremental&amp;since=...</code>로 증분 색인을 돌려, 수정된 건만 색인되는지 확인합니다.</li>
+  <li value="4">Chunk 크기를 바꿔 bulk 요청 크기가 달라지는 것을 관찰합니다.</li>
+</ol>
+</blockquote>
+<hr/>
+<p class="my_h2">이 장의 요점</p>
+<ul>
+  <li>검색 인덱스 동기화는 DB의 사본인 검색 엔진을 주기적으로 맞추는 작업입니다.</li>
+  <li>평상시 증분 색인(<code>updated_at</code> 기준), 정책 변경·장애 시 전체 재색인으로 분리해 운영합니다.</li>
+  <li>Custom Writer에서 <code>Chunk</code>를 검색 엔진 bulk API로 보내고, 전체 재색인은 새 인덱스 색인 후 별칭 전환으로 무중단 처리합니다.</li>
+</ul>
+<hr/>
+<p><strong>다음 장에서는</strong> 지금까지 여러 사례에서 단편적으로 만난 Skip과 Retry를 한자리에 모아 정리합니다. 무엇을 건너뛰고 무엇을 다시 시도할지, 트랜잭션과 함께 어떻게 동작하는지를 체계적으로 다룹니다.</p>
+
+</body>
+</html>

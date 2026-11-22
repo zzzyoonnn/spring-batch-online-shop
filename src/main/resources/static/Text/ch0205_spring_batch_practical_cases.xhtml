@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"
+  "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <title></title>
+  <link href="../Styles/Style0001.css" rel="stylesheet" type="text/css"/>
+</head>
+
+<body>
+<h2 class="disp_none">5장. 상품 CSV 대량 업로드</h2>
+<p class="my_h1">5장. 상품 CSV 대량 업로드</p>
+<blockquote>
+<p><strong>이 장에서 배우는 것</strong></p>
+<ul>
+  <li>FlatFileItemReader로 CSV를 한 줄씩 읽어 객체로 매핑하기</li>
+  <li>Validation으로 상품 데이터를 검증하고, 잘못된 행을 Skip 처리하기</li>
+  <li>JdbcBatchItemWriter로 대량 저장하고, 실패 행을 별도 리포트로 남기기</li>
+</ul>
+</blockquote>
+<hr/>
+<p class="my_h2">5.1 사례 이해: 가장 흔한 배치</p>
+<p>관리자가 상품 10만 건이 든 CSV를 업로드하면, 마켓온은 파일을 한 줄씩 읽고 검증한 뒤 상품 테이블에 저장합니다. 이건 모든 쇼핑몰에서 가장 자주 쓰는 배치입니다.</p>
+<pre><code class="language-text">CSV 파일
+ → ItemReader          (한 줄씩 읽기)
+ → ItemProcessor        (상품명/가격/카테고리 검증·변환)
+ → ItemWriter           (상품 테이블 저장)
+ + 실패 행 리포트         (어떤 행이 왜 틀렸는지 기록)</code></pre>
+<p>같은 패턴으로 회원 대량 등록, 쿠폰 대량 발급, 거래처 목록 업로드, 재고 일괄 반영을 모두 처리할 수 있습니다.</p>
+<blockquote>
+<p>📌 <strong>핵심:</strong> 파일이 크면 일반 API 요청에서 바로 처리하기 어렵습니다. 요청이 길어지고, 실패하면 어디까지 처리됐는지 알 수 없습니다. 배치는 진행 상태를 메타테이블에 남기고 실패 지점부터 재시작할 수 있습니다.</p>
+</blockquote>
+<hr/>
+<p class="my_h2">5.2 입력 모델과 도메인</p>
+<p>CSV 한 줄을 담을 DTO와, 저장할 엔티티를 나눕니다. 검증은 입력 DTO에 Validation 애너테이션으로 붙입니다.</p>
+<pre><code class="language-java"><span class="hl-annotation">@Getter</span> <span class="hl-annotation">@Setter</span>
+<span class="hl-keyword">public</span> <span class="hl-keyword">class</span> <span class="hl-class">ProductCsvRow</span> {
+    <span class="hl-annotation">@NotBlank</span>(message = <span class="hl-string">&quot;상품명은 필수입니다&quot;</span>)
+    <span class="hl-keyword">private</span> <span class="hl-class">String</span> name;
+
+    <span class="hl-annotation">@NotNull</span> <span class="hl-annotation">@Min</span>(value = <span class="hl-number">0</span>, message = <span class="hl-string">&quot;가격은 0 이상이어야 합니다&quot;</span>)
+    <span class="hl-keyword">private</span> <span class="hl-class">Integer</span> price;
+
+    <span class="hl-annotation">@NotBlank</span>(message = <span class="hl-string">&quot;카테고리는 필수입니다&quot;</span>)
+    <span class="hl-keyword">private</span> <span class="hl-class">String</span> categoryCode;
+}</code></pre>
+<p>CSV 예시:</p>
+<pre><code class="language-text">name,price,categoryCode
+무선 마우스,12900,ELEC
+기계식 키보드,89000,ELEC
+,15000,ELEC        ← 상품명 누락 (검증 실패)
+USB 허브,-100,ELEC ← 가격 음수 (검증 실패)</code></pre>
+<hr/>
+<p class="my_h2">5.3 Reader: FlatFileItemReader</p>
+<p><code>FlatFileItemReader</code>는 텍스트 파일을 한 줄씩 읽어 객체로 매핑합니다. 구분자·컬럼명·매핑 대상만 지정하면 됩니다.</p>
+<pre><code class="language-java"><span class="hl-annotation">@Bean</span>
+<span class="hl-annotation">@StepScope</span> <span class="hl-comment">// 잡 파라미터로 파일 경로를 주입받기 위해</span>
+<span class="hl-keyword">public</span> <span class="hl-class">FlatFileItemReader</span>&lt;<span class="hl-class">ProductCsvRow</span>&gt; <span class="hl-method">productReader</span>(
+        <span class="hl-annotation">@Value</span>(<span class="hl-string">&quot;#{jobParameters[&#39;filePath&#39;]}&quot;</span>) <span class="hl-class">String</span> filePath) {
+    <span class="hl-keyword">return</span> <span class="hl-keyword">new</span> <span class="hl-class">FlatFileItemReaderBuilder</span>&lt;<span class="hl-class">ProductCsvRow</span>&gt;()
+            .<span class="hl-method">name</span>(<span class="hl-string">&quot;productReader&quot;</span>)
+            .<span class="hl-method">resource</span>(<span class="hl-keyword">new</span> <span class="hl-class">FileSystemResource</span>(filePath))
+            .<span class="hl-method">linesToSkip</span>(<span class="hl-number">1</span>) <span class="hl-comment">// 헤더 한 줄 건너뜀</span>
+            .<span class="hl-method">delimited</span>().<span class="hl-method">delimiter</span>(<span class="hl-string">&quot;,&quot;</span>)
+            .<span class="hl-method">names</span>(<span class="hl-string">&quot;name&quot;</span>, <span class="hl-string">&quot;price&quot;</span>, <span class="hl-string">&quot;categoryCode&quot;</span>)
+            .<span class="hl-method">targetType</span>(<span class="hl-class">ProductCsvRow</span>.<span class="hl-keyword">class</span>)
+            .<span class="hl-method">build</span>();
+}</code></pre>
+<blockquote>
+<p>💡 <code>@StepScope</code>는 &quot;Step이 실행될 때&quot; 빈을 생성하게 해, <code>jobParameters</code>에서 값(여기서는 업로드된 파일 경로)을 주입받을 수 있게 합니다. 파일·기준일처럼 실행마다 달라지는 입력을 다룰 때 거의 항상 함께 등장합니다.</p>
+</blockquote>
+<hr/>
+<p class="my_h2">5.4 Processor: 검증과 변환</p>
+<p>Processor에서 Validation으로 검증하고, 통과한 행만 엔티티로 변환합니다. 검증 실패는 예외를 던져 Skip 흐름으로 보냅니다.</p>
+<pre><code class="language-java"><span class="hl-annotation">@Component</span>
+<span class="hl-annotation">@RequiredArgsConstructor</span>
+<span class="hl-keyword">public</span> <span class="hl-keyword">class</span> <span class="hl-class">ProductProcessor</span> <span class="hl-keyword">implements</span> <span class="hl-class">ItemProcessor</span>&lt;<span class="hl-class">ProductCsvRow</span>, <span class="hl-class">Product</span>&gt; {
+
+    <span class="hl-keyword">private</span> <span class="hl-keyword">final</span> <span class="hl-class">Validator</span> validator;
+    <span class="hl-keyword">private</span> <span class="hl-keyword">final</span> <span class="hl-class">CategoryRepository</span> categoryRepository;
+
+    <span class="hl-annotation">@Override</span>
+    <span class="hl-keyword">public</span> <span class="hl-class">Product</span> <span class="hl-method">process</span>(<span class="hl-class">ProductCsvRow</span> row) {
+        <span class="hl-class">Set</span>&lt;<span class="hl-class">ConstraintViolation</span>&lt;<span class="hl-class">ProductCsvRow</span>&gt;&gt; violations = validator.<span class="hl-method">validate</span>(row);
+        <span class="hl-keyword">if</span> (!violations.<span class="hl-method">isEmpty</span>()) {
+            <span class="hl-class">String</span> msg = violations.<span class="hl-method">iterator</span>().<span class="hl-method">next</span>().<span class="hl-method">getMessage</span>();
+            <span class="hl-keyword">throw</span> <span class="hl-keyword">new</span> <span class="hl-class">InvalidProductRowException</span>(row, msg); <span class="hl-comment">// → Skip 대상</span>
+        }
+        <span class="hl-class">Long</span> categoryId = categoryRepository.<span class="hl-method">findIdByCode</span>(row.<span class="hl-method">getCategoryCode</span>());
+        <span class="hl-keyword">if</span> (categoryId == <span class="hl-keyword">null</span>) {
+            <span class="hl-keyword">throw</span> <span class="hl-keyword">new</span> <span class="hl-class">InvalidProductRowException</span>(row, <span class="hl-string">&quot;존재하지 않는 카테고리&quot;</span>);
+        }
+        <span class="hl-keyword">return</span> <span class="hl-class">Product</span>.<span class="hl-method">of</span>(row.<span class="hl-method">getName</span>(), row.<span class="hl-method">getPrice</span>(), categoryId);
+    }
+}</code></pre>
+<blockquote>
+<p>💡 카테고리 코드를 ID로 바꾸는 것도 Processor의 일입니다. 이런 &quot;코드 → 내부 식별자&quot; 매핑은 CSV 업로드에서 단골로 등장합니다.</p>
+</blockquote>
+<hr/>
+<p class="my_h2">5.5 Writer와 Step 조립: 실패 행을 남기는 Skip</p>
+<p><code>JdbcBatchItemWriter</code>는 Chunk를 모아 한 번에 <code>INSERT</code>합니다. 핵심은 <strong>잘못된 행 하나 때문에 전체를 실패시키지 않는 것</strong>입니다. Step에 Skip 정책을 걸고, Skip된 행은 리스너로 잡아 <code>product_import_error</code> 테이블에 기록합니다.</p>
+<pre><code class="language-java"><span class="hl-annotation">@Bean</span>
+<span class="hl-keyword">public</span> <span class="hl-class">Step</span> <span class="hl-method">productImportStep</span>() {
+    <span class="hl-keyword">return</span> <span class="hl-keyword">new</span> <span class="hl-class">StepBuilder</span>(<span class="hl-string">&quot;productImportStep&quot;</span>, jobRepository)
+            .&lt;<span class="hl-class">ProductCsvRow</span>, <span class="hl-class">Product</span>&gt;<span class="hl-method">chunk</span>(<span class="hl-number">500</span>, transactionManager)
+            .<span class="hl-method">reader</span>(<span class="hl-method">productReader</span>(<span class="hl-keyword">null</span>))
+            .<span class="hl-method">processor</span>(productProcessor)
+            .<span class="hl-method">writer</span>(productWriter)
+            .<span class="hl-method">faultTolerant</span>()
+            .<span class="hl-method">skip</span>(<span class="hl-class">InvalidProductRowException</span>.<span class="hl-keyword">class</span>)
+            .<span class="hl-method">skipLimit</span>(<span class="hl-number">1000</span>) <span class="hl-comment">// 최대 1,000행까지 건너뜀</span>
+            .<span class="hl-method">listener</span>(productSkipListener) <span class="hl-comment">// 스킵된 행을 error 테이블에 기록</span>
+            .<span class="hl-method">build</span>();
+}</code></pre>
+<p>실패 행을 담는 테이블은 다음과 같습니다.</p>
+<pre><code class="language-sql"><span class="hl-keyword">CREATE</span> <span class="hl-keyword">TABLE</span> <span class="hl-method">product_import_error</span> (
+    id           <span class="hl-keyword">BIGINT</span> AUTO_INCREMENT <span class="hl-keyword">PRIMARY</span> <span class="hl-keyword">KEY</span>,
+    row_number   <span class="hl-keyword">INT</span>,
+    product_name <span class="hl-keyword">VARCHAR</span>(<span class="hl-number">255</span>),
+    error_message <span class="hl-keyword">VARCHAR</span>(<span class="hl-number">500</span>),
+    raw_data     <span class="hl-keyword">TEXT</span>,
+    created_at   <span class="hl-keyword">DATETIME</span>
+);</code></pre>
+<p>이렇게 하면 업로드가 끝난 뒤 관리자가 &quot;10만 건 중 37건 실패, 사유는 이러이러함&quot;을 화면에서 확인하고 그 행만 고쳐 다시 올릴 수 있습니다.</p>
+<blockquote>
+<p>⚠️ Skip이 항상 옳은 건 아닙니다. 거래처 목록처럼 일부 누락이 허용되는 데이터는 Skip이 적절하지만, 금융·정산처럼 정확성이 생명인 데이터는 한 건만 틀려도 전체를 멈추는 편이 안전할 수 있습니다. <strong>업무 성격에 따라 결정</strong>하세요(15장에서 정책을 깊이 다룹니다).</p>
+</blockquote>
+<hr/>
+<p class="my_h2">5.6 화면에 붙이기</p>
+<p>4장의 운영 콘솔에 업로드 폼을 추가합니다. 파일을 받아 서버 임시 경로에 저장하고, 그 경로를 JobParameter로 넘깁니다.</p>
+<pre><code class="language-java"><span class="hl-annotation">@PostMapping</span>(<span class="hl-string">&quot;/jobs/product-import&quot;</span>)
+<span class="hl-keyword">public</span> <span class="hl-class">String</span> <span class="hl-method">runProductImport</span>(<span class="hl-annotation">@RequestParam</span> <span class="hl-class">MultipartFile</span> file) <span class="hl-keyword">throws</span> <span class="hl-class">Exception</span> {
+    <span class="hl-class">Path</span> saved = <span class="hl-method">saveToTemp</span>(file); <span class="hl-comment">// 임시 디렉터리에 저장</span>
+    <span class="hl-class">JobParameters</span> params = <span class="hl-keyword">new</span> <span class="hl-class">JobParametersBuilder</span>()
+            .<span class="hl-method">addString</span>(<span class="hl-string">&quot;filePath&quot;</span>, saved.<span class="hl-method">toString</span>())
+            .<span class="hl-method">addLong</span>(<span class="hl-string">&quot;runAt&quot;</span>, <span class="hl-class">System</span>.<span class="hl-method">currentTimeMillis</span>())
+            .<span class="hl-method">toJobParameters</span>();
+    jobLauncher.<span class="hl-method">run</span>(productImportJob, params);
+    <span class="hl-keyword">return</span> <span class="hl-string">&quot;redirect:/admin&quot;</span>;
+}</code></pre>
+<blockquote>
+<p>🧪 <strong>실습 — CSV 업로드 배치 만들기</strong></p>
+<ol>
+  <li value="1">위 모델·Reader·Processor·Writer·Step을 <code>com.marketon.batch.product</code>에 구현합니다.</li>
+  <li value="2">5.2의 예시처럼 정상 행과 오류 행(상품명 누락, 음수 가격)을 섞은 CSV를 만듭니다.</li>
+  <li value="3">콘솔에서 업로드한 뒤, <code>product</code> 테이블에 정상 행만 들어갔는지, <code>product_import_error</code>에 오류 행 2건이 사유와 함께 남았는지 확인합니다.</li>
+  <li value="4">Chunk 크기를 500 → 50으로 바꿔 다시 실행하고, 동작은 같지만 커밋 횟수가 늘어남을 관찰합니다.</li>
+</ol>
+</blockquote>
+<hr/>
+<p class="my_h2">이 장의 요점</p>
+<ul>
+  <li><code>FlatFileItemReader</code>로 CSV를 객체로 매핑하고, <code>@StepScope</code>로 업로드 파일 경로를 JobParameter로 주입받습니다.</li>
+  <li>Processor에서 Validation으로 검증·변환하고, 검증 실패는 예외로 Skip 흐름에 태웁니다.</li>
+  <li><code>faultTolerant().skip()</code>과 리스너로 잘못된 행만 건너뛰고 <code>product_import_error</code>에 사유를 남겨, 관리자가 실패 행만 고쳐 재업로드할 수 있게 합니다.</li>
+</ul>
+<hr/>
+<p><strong>다음 장에서는</strong> 파일이 아니라 DB에서 DB로 흐르는 사례를 다룹니다. 회원 ID 구간을 나눠 레거시 데이터를 새 구조로 옮기고, 운영 데이터를 안전하게 보정하는 마이그레이션 배치를 만듭니다.</p>
+
+</body>
+</html>

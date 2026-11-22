@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"
+  "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <title></title>
+  <link href="../Styles/Style0001.css" rel="stylesheet" type="text/css"/>
+</head>
+
+<body>
+<h2 class="disp_none">2장. 개발 환경과 프로젝트 준비</h2>
+<p class="my_h1">2장. 개발 환경과 프로젝트 준비</p>
+<blockquote>
+<p><strong>이 장에서 배우는 것</strong></p>
+<ul>
+  <li>Maven으로 Spring Boot + Spring Batch 프로젝트를 구성하는 법</li>
+  <li>MySQL 연결과 <code>application.properties</code> 설정, Lombok·Validation 의존성 추가</li>
+  <li>Spring Batch 메타테이블이 자동 생성되도록 준비하기</li>
+</ul>
+</blockquote>
+<hr/>
+<p class="my_h2">2.1 의존성 구성 (Maven)</p>
+<p>마켓온은 Maven으로 빌드합니다. <code>pom.xml</code>의 부모로 Spring Boot 3.x 스타터를 두고, 다음 스타터·라이브러리를 추가합니다. (구체적인 버전은 [start.spring.io](https://start.spring.io)에서 생성하면 호환되는 최신 안정 버전이 자동으로 채워집니다. 버전 숫자는 공식 문서·스타터로 확인하세요.)</p>
+<pre><code class="language-xml"><span class="hl-keyword">&lt;dependencies</span><span class="hl-keyword">&gt;</span>
+    <span class="hl-comment">&lt;!-- 웹 + 화면 --&gt;</span>
+    <span class="hl-keyword">&lt;dependency</span><span class="hl-keyword">&gt;</span>
+        <span class="hl-keyword">&lt;groupId</span><span class="hl-keyword">&gt;</span>org.springframework.boot<span class="hl-keyword">&lt;/groupId</span><span class="hl-keyword">&gt;</span>
+        <span class="hl-keyword">&lt;artifactId</span><span class="hl-keyword">&gt;</span>spring-boot-starter-web<span class="hl-keyword">&lt;/artifactId</span><span class="hl-keyword">&gt;</span>
+    <span class="hl-keyword">&lt;/dependency</span><span class="hl-keyword">&gt;</span>
+    <span class="hl-keyword">&lt;dependency</span><span class="hl-keyword">&gt;</span>
+        <span class="hl-keyword">&lt;groupId</span><span class="hl-keyword">&gt;</span>org.springframework.boot<span class="hl-keyword">&lt;/groupId</span><span class="hl-keyword">&gt;</span>
+        <span class="hl-keyword">&lt;artifactId</span><span class="hl-keyword">&gt;</span>spring-boot-starter-thymeleaf<span class="hl-keyword">&lt;/artifactId</span><span class="hl-keyword">&gt;</span>
+    <span class="hl-keyword">&lt;/dependency</span><span class="hl-keyword">&gt;</span>
+
+    <span class="hl-comment">&lt;!-- 배치 --&gt;</span>
+    <span class="hl-keyword">&lt;dependency</span><span class="hl-keyword">&gt;</span>
+        <span class="hl-keyword">&lt;groupId</span><span class="hl-keyword">&gt;</span>org.springframework.boot<span class="hl-keyword">&lt;/groupId</span><span class="hl-keyword">&gt;</span>
+        <span class="hl-keyword">&lt;artifactId</span><span class="hl-keyword">&gt;</span>spring-boot-starter-batch<span class="hl-keyword">&lt;/artifactId</span><span class="hl-keyword">&gt;</span>
+    <span class="hl-keyword">&lt;/dependency</span><span class="hl-keyword">&gt;</span>
+
+    <span class="hl-comment">&lt;!-- 데이터 접근 + MySQL --&gt;</span>
+    <span class="hl-keyword">&lt;dependency</span><span class="hl-keyword">&gt;</span>
+        <span class="hl-keyword">&lt;groupId</span><span class="hl-keyword">&gt;</span>org.springframework.boot<span class="hl-keyword">&lt;/groupId</span><span class="hl-keyword">&gt;</span>
+        <span class="hl-keyword">&lt;artifactId</span><span class="hl-keyword">&gt;</span>spring-boot-starter-data-jpa<span class="hl-keyword">&lt;/artifactId</span><span class="hl-keyword">&gt;</span>
+    <span class="hl-keyword">&lt;/dependency</span><span class="hl-keyword">&gt;</span>
+    <span class="hl-keyword">&lt;dependency</span><span class="hl-keyword">&gt;</span>
+        <span class="hl-keyword">&lt;groupId</span><span class="hl-keyword">&gt;</span>com.mysql<span class="hl-keyword">&lt;/groupId</span><span class="hl-keyword">&gt;</span>
+        <span class="hl-keyword">&lt;artifactId</span><span class="hl-keyword">&gt;</span>mysql-connector-j<span class="hl-keyword">&lt;/artifactId</span><span class="hl-keyword">&gt;</span>
+        <span class="hl-keyword">&lt;scope</span><span class="hl-keyword">&gt;</span>runtime<span class="hl-keyword">&lt;/scope</span><span class="hl-keyword">&gt;</span>
+    <span class="hl-keyword">&lt;/dependency</span><span class="hl-keyword">&gt;</span>
+
+    <span class="hl-comment">&lt;!-- 보안 --&gt;</span>
+    <span class="hl-keyword">&lt;dependency</span><span class="hl-keyword">&gt;</span>
+        <span class="hl-keyword">&lt;groupId</span><span class="hl-keyword">&gt;</span>org.springframework.boot<span class="hl-keyword">&lt;/groupId</span><span class="hl-keyword">&gt;</span>
+        <span class="hl-keyword">&lt;artifactId</span><span class="hl-keyword">&gt;</span>spring-boot-starter-security<span class="hl-keyword">&lt;/artifactId</span><span class="hl-keyword">&gt;</span>
+    <span class="hl-keyword">&lt;/dependency</span><span class="hl-keyword">&gt;</span>
+
+    <span class="hl-comment">&lt;!-- 검증 --&gt;</span>
+    <span class="hl-keyword">&lt;dependency</span><span class="hl-keyword">&gt;</span>
+        <span class="hl-keyword">&lt;groupId</span><span class="hl-keyword">&gt;</span>org.springframework.boot<span class="hl-keyword">&lt;/groupId</span><span class="hl-keyword">&gt;</span>
+        <span class="hl-keyword">&lt;artifactId</span><span class="hl-keyword">&gt;</span>spring-boot-starter-validation<span class="hl-keyword">&lt;/artifactId</span><span class="hl-keyword">&gt;</span>
+    <span class="hl-keyword">&lt;/dependency</span><span class="hl-keyword">&gt;</span>
+
+    <span class="hl-comment">&lt;!-- Lombok --&gt;</span>
+    <span class="hl-keyword">&lt;dependency</span><span class="hl-keyword">&gt;</span>
+        <span class="hl-keyword">&lt;groupId</span><span class="hl-keyword">&gt;</span>org.projectlombok<span class="hl-keyword">&lt;/groupId</span><span class="hl-keyword">&gt;</span>
+        <span class="hl-keyword">&lt;artifactId</span><span class="hl-keyword">&gt;</span>lombok<span class="hl-keyword">&lt;/artifactId</span><span class="hl-keyword">&gt;</span>
+        <span class="hl-keyword">&lt;optional</span><span class="hl-keyword">&gt;</span>true<span class="hl-keyword">&lt;/optional</span><span class="hl-keyword">&gt;</span>
+    <span class="hl-keyword">&lt;/dependency</span><span class="hl-keyword">&gt;</span>
+<span class="hl-keyword">&lt;/dependencies</span><span class="hl-keyword">&gt;</span></code></pre>
+<blockquote>
+<p>💡 Tailwind CSS는 CDN으로 불러올 것이므로 별도 의존성이 없습니다. 4장에서 HTML <code>&lt;head&gt;</code>에 한 줄만 추가합니다. 빌드 도구도 필요 없습니다.</p>
+</blockquote>
+<hr/>
+<p class="my_h2">2.2 MySQL과 application.properties</p>
+<p>마켓온은 MySQL 하나에 <strong>업무 데이터</strong>(상품·주문·회원·정산 등)와 <strong>배치 메타데이터</strong>(Job 실행 이력)를 함께 둡니다. 먼저 데이터베이스를 만듭니다.</p>
+<pre><code class="language-sql"><span class="hl-keyword">CREATE</span> <span class="hl-keyword">DATABASE</span> marketon <span class="hl-keyword">DEFAULT</span> CHARACTER <span class="hl-keyword">SET</span> utf8mb4;</code></pre>
+<p><code>src/main/resources/application.properties</code>를 다음과 같이 작성합니다.</p>
+<pre><code class="language-properties"><span class="hl-comment"># --- DataSource ---</span>
+<span class="hl-keyword">spring.datasource.url</span>=<span class="hl-string">jdbc:mysql://localhost:3306/marketon?serverTimezone=Asia/Seoul&amp;characterEncoding=UTF-8</span>
+<span class="hl-keyword">spring.datasource.username</span>=<span class="hl-string">marketon</span>
+<span class="hl-keyword">spring.datasource.password</span>=<span class="hl-string">changeme</span>
+<span class="hl-keyword">spring.datasource.driver-class-name</span>=<span class="hl-string">com.mysql.cj.jdbc.Driver</span>
+
+<span class="hl-comment"># --- JPA ---</span>
+<span class="hl-keyword">spring.jpa.hibernate.ddl-auto</span>=<span class="hl-string">update</span>
+<span class="hl-keyword">spring.jpa.show-sql</span>=<span class="hl-string">true</span>
+<span class="hl-keyword">spring.jpa.properties.hibernate.format_sql</span>=<span class="hl-string">true</span>
+
+<span class="hl-comment"># --- Spring Batch ---</span>
+<span class="hl-comment"># 메타테이블 자동 생성 (개발용). 운영에서는 수동 생성 후 never 권장</span>
+<span class="hl-keyword">spring.batch.jdbc.initialize-schema</span>=<span class="hl-string">always</span>
+<span class="hl-comment"># 애플리케이션 기동 시 등록된 Job을 자동 실행하지 않음 (우리는 화면에서 직접 실행)</span>
+<span class="hl-keyword">spring.batch.job.enabled</span>=<span class="hl-string">false</span></code></pre>
+<blockquote>
+<p>⚠️ <code>spring.batch.job.enabled=false</code>는 이 책에서 중요합니다. 기본값이면 애플리케이션이 뜰 때마다 등록된 Job이 멋대로 한 번씩 실행됩니다. 우리는 관리자 화면에서 원하는 때에 실행할 것이므로 자동 실행을 꺼 둡니다.</p>
+</blockquote>
+<blockquote>
+<p>📌 <strong>핵심:</strong> 업무 DB와 배치 메타 DB가 같은 데이터소스를 쓰면, 배치 작업과 메타데이터 기록이 한 트랜잭션 흐름 안에서 일관되게 동작합니다.</p>
+</blockquote>
+<hr/>
+<p class="my_h2">2.3 메타테이블이 만들어지는 원리</p>
+<p>Spring Batch는 Job·Step의 실행 상태를 6개 안팎의 메타테이블에 기록합니다.</p>
+<pre><code class="language-text">BATCH_JOB_INSTANCE       어떤 Job이 어떤 파라미터로 정의됐는가
+BATCH_JOB_EXECUTION      그 Job 실행의 성공/실패/시각
+BATCH_JOB_EXECUTION_PARAMS  실행에 넘긴 파라미터
+BATCH_STEP_EXECUTION     각 Step의 읽기/쓰기/스킵 건수와 상태
+BATCH_JOB_EXECUTION_CONTEXT / BATCH_STEP_EXECUTION_CONTEXT  재시작용 상태 저장</code></pre>
+<p>위 <code>initialize-schema=always</code> 설정 덕분에, 애플리케이션을 처음 띄우면 Spring Batch가 MySQL용 스키마 스크립트(<code>org/springframework/batch/core/schema-mysql.sql</code>)를 실행해 이 테이블들을 자동으로 만들어 줍니다. 메타테이블의 의미는 3장과 17장에서 자세히 다루고, 빠른 참조는 <strong>부록 A</strong>에 정리했습니다.</p>
+<blockquote>
+<p>💡 운영 환경에서는 권한 분리와 안정성을 위해 스키마를 사람이 직접 만들고 <code>spring.batch.jdbc.initialize-schema=never</code>로 두는 것이 일반적입니다. 스크립트는 <code>spring-batch-core</code> JAR 안에 DB 종류별로 들어 있습니다.</p>
+</blockquote>
+<hr/>
+<p class="my_h2">2.4 프로젝트 패키지 구조</p>
+<p>사례가 늘어도 흐트러지지 않도록, 처음부터 패키지를 사례 단위로 나눕니다.</p>
+<pre><code class="language-text">com.marketon
+├─ MarketOnApplication.java     // main
+├─ common/                      // 공통 설정 (보안, 시간 등)
+├─ admin/                       // 관리자 화면 컨트롤러·뷰
+└─ batch/
+   ├─ product/                  // 5장 CSV 업로드
+   ├─ settlement/               // 7장 정산
+   ├─ dormant/                  // 9장 휴면 전환
+   └─ ...                       // 사례별 Job·Step·Reader/Writer</code></pre>
+<p>각 사례 패키지에는 그 배치의 <code>*JobConfig</code>, 도메인 엔티티, Reader/Processor/Writer가 함께 들어갑니다. 한 사례를 이해하려면 한 패키지만 보면 되도록 응집도를 높이는 것이 목적입니다.</p>
+<blockquote>
+<p>🧪 <strong>실습 — 프로젝트 띄우기</strong></p>
+<ol>
+  <li value="1">[start.spring.io](https://start.spring.io)에서 위 의존성으로 Maven 프로젝트를 생성합니다.</li>
+  <li value="2">로컬 MySQL에 <code>marketon</code> 데이터베이스와 계정을 만듭니다.</li>
+  <li value="3"><code>application.properties</code>를 2.2처럼 작성하고 애플리케이션을 실행합니다.</li>
+  <li value="4">MySQL에서 <code>SHOW TABLES LIKE &#39;BATCH_%&#39;;</code>를 실행해 메타테이블 6개가 생겼는지 확인합니다.</li>
+</ol>
+<p>메타테이블이 보이면 배치를 돌릴 토대가 완성된 것입니다.</p>
+</blockquote>
+<hr/>
+<p class="my_h2">이 장의 요점</p>
+<ul>
+  <li>마켓온은 Maven + Spring Boot 3.x로 빌드하고, 웹·Thymeleaf·Batch·JPA·Security·Validation·Lombok 의존성을 씁니다.</li>
+  <li><code>application.properties</code>에서 MySQL을 연결하고, <code>spring.batch.job.enabled=false</code>로 자동 실행을 끄고, <code>initialize-schema=always</code>로 메타테이블을 자동 생성합니다.</li>
+  <li>배치 메타테이블은 Job/Step 실행 이력을 기록하며, 재시작과 운영 추적의 근거가 됩니다.</li>
+</ul>
+<hr/>
+<p><strong>다음 장에서는</strong> Spring Batch의 심장인 Job·Step·Chunk 구조와 Reader→Processor→Writer 흐름을 코드로 확인하며, 가장 단순한 Hello Batch를 직접 실행해 봅니다.</p>
+
+</body>
+</html>

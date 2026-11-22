@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"
+  "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <title></title>
+  <link href="../Styles/Style0001.css" rel="stylesheet" type="text/css"/>
+</head>
+
+<body>
+<h2 class="disp_none">8장. 통계·리포트 집계</h2>
+<p class="my_h1">8장. 통계·리포트 집계</p>
+<blockquote>
+<p><strong>이 장에서 배우는 것</strong></p>
+<ul>
+  <li>실시간 집계 대신 배치로 미리 집계 테이블을 만드는 이유</li>
+  <li>기준일 JobParameter로 특정 날짜만 다시 집계하는 구조</li>
+  <li>집계 결과를 대시보드 화면에 빠르게 보여 주기</li>
+</ul>
+</blockquote>
+<hr/>
+<p class="my_h2">8.1 사례 이해: 미리 계산해 두기</p>
+<p>마켓온 관리자 대시보드는 일별 매출, 카테고리별 매출, 판매자별 매출을 보여 줍니다. 이 숫자를 화면을 열 때마다 주문 원장 수백만 건에서 <code>GROUP BY</code>로 계산하면 DB가 버티지 못합니다.</p>
+<pre><code class="language-text">실시간 계산 방식:
+  화면 열 때마다 주문 테이블 수백만 건을 GROUP BY  →  느리고 무겁다
+
+배치 집계 방식:
+  새벽에 한 번 집계해 통계 테이블에 저장
+  화면에서는 집계 테이블만 조회       →  즉시 응답</code></pre>
+<p>이 패턴으로 일별 매출 통계, 월별 가입자 통계, 상품별 판매량, 검색어 랭킹, 인기 게시글 집계를 모두 만듭니다.</p>
+<blockquote>
+<p>📌 <strong>핵심:</strong> 통계 배치의 본질은 &quot;무거운 계산을 트래픽 없는 시간에 미리 해 두고, 화면은 가벼운 조회만 하게&quot; 만드는 것입니다.</p>
+</blockquote>
+<hr/>
+<p class="my_h2">8.2 집계 흐름과 테이블</p>
+<p>전날 주문 원장을 읽어 일별·카테고리별·판매자별로 집계해 통계 테이블에 저장합니다.</p>
+<pre><code class="language-text">주문 원장 데이터
+ → 일별 매출 집계
+ → 카테고리별 매출 집계
+ → 판매자별 매출 집계
+ → 통계 테이블 저장</code></pre>
+<p>집계 결과 테이블 예:</p>
+<pre><code class="language-sql"><span class="hl-keyword">CREATE</span> <span class="hl-keyword">TABLE</span> <span class="hl-method">daily_sales_stat</span> (
+    stat_date     <span class="hl-keyword">DATE</span>        <span class="hl-keyword">NOT</span> <span class="hl-keyword">NULL</span>,
+    category_code <span class="hl-keyword">VARCHAR</span>(<span class="hl-number">40</span>) <span class="hl-keyword">NOT</span> <span class="hl-keyword">NULL</span>,
+    order_count   <span class="hl-keyword">INT</span>         <span class="hl-keyword">NOT</span> <span class="hl-keyword">NULL</span>,
+    sales_amount  <span class="hl-keyword">BIGINT</span>      <span class="hl-keyword">NOT</span> <span class="hl-keyword">NULL</span>,
+    <span class="hl-keyword">PRIMARY</span> <span class="hl-keyword">KEY</span> (stat_date, category_code)
+);</code></pre>
+<p><code>PRIMARY KEY (stat_date, category_code)</code>가 정산의 UNIQUE 제약과 같은 역할을 합니다. 같은 날짜·카테고리 통계가 중복으로 쌓이지 않게 막습니다.</p>
+<hr/>
+<p class="my_h2">8.3 기준일을 파라미터로 받기</p>
+<p>통계 배치는 거의 항상 <strong>기준일을 파라미터로 받는 구조</strong>가 좋습니다. 특정 날짜 통계가 잘못됐을 때 그 날짜만 다시 생성할 수 있기 때문입니다.</p>
+<pre><code class="language-text">dailySalesJob date=2026-06-29</code></pre>
+<pre><code class="language-java"><span class="hl-annotation">@Bean</span>
+<span class="hl-keyword">public</span> <span class="hl-class">Job</span> <span class="hl-method">dailySalesJob</span>() {
+    <span class="hl-keyword">return</span> <span class="hl-keyword">new</span> <span class="hl-class">JobBuilder</span>(<span class="hl-string">&quot;dailySalesJob&quot;</span>, jobRepository)
+            .<span class="hl-method">start</span>(<span class="hl-method">clearStatStep</span>())      <span class="hl-comment">// 해당 기준일 기존 통계 삭제 (멱등성)</span>
+            .<span class="hl-method">next</span>(<span class="hl-method">aggregateSalesStep</span>())  <span class="hl-comment">// 집계 후 저장</span>
+            .<span class="hl-method">build</span>();
+}
+
+<span class="hl-annotation">@Bean</span>
+<span class="hl-annotation">@StepScope</span>
+<span class="hl-keyword">public</span> <span class="hl-class">JdbcPagingItemReader</span>&lt;<span class="hl-class">DailySalesRow</span>&gt; <span class="hl-method">salesReader</span>(
+        <span class="hl-annotation">@Value</span>(<span class="hl-string">&quot;#{jobParameters[&#39;date&#39;]}&quot;</span>) <span class="hl-class">String</span> date) {
+    <span class="hl-comment">// SELECT category_code, COUNT(*), SUM(amount)</span>
+    <span class="hl-comment">// FROM orders WHERE order_date = :date AND status=&#39;PAID&#39;</span>
+    <span class="hl-comment">// GROUP BY category_code</span>
+    <span class="hl-comment">// ...</span>
+}</code></pre>
+<blockquote>
+<p>💡 GROUP BY 집계는 Reader의 SQL에서 DB에게 시키는 편이 효율적입니다. Reader가 이미 카테고리별로 합산된 행을 읽어 오면, Processor·Writer는 단순히 저장만 하면 됩니다.</p>
+</blockquote>
+<p>집계 직전에 해당 기준일의 기존 통계를 지우는 <code>clearStatStep</code>을 두면, 같은 날짜를 다시 돌려도 결과가 정확히 한 벌만 남습니다(7장과 같은 멱등성 패턴).</p>
+<blockquote>
+<p>⚠️ &quot;오늘&quot; 같은 상대 날짜를 배치 안에서 <code>LocalDate.now()</code>로 직접 구하지 마세요. 재실행·지연 실행 시 엉뚱한 날짜가 집계됩니다. 기준일은 항상 <strong>밖에서 파라미터로 주입</strong>해, 어제 새벽에 실패한 6월 29일 집계를 오늘 다시 돌려도 6월 29일이 집계되게 합니다.</p>
+</blockquote>
+<hr/>
+<p class="my_h2">8.4 대시보드에 연결하기</p>
+<p>집계 테이블이 있으면 화면은 단순 조회입니다. 4장의 운영 콘솔에 통계 카드를 추가합니다.</p>
+<pre><code class="language-java"><span class="hl-annotation">@GetMapping</span>(<span class="hl-string">&quot;/stats&quot;</span>)
+<span class="hl-keyword">public</span> <span class="hl-class">String</span> <span class="hl-method">stats</span>(<span class="hl-annotation">@RequestParam</span>(required = <span class="hl-keyword">false</span>) <span class="hl-class">String</span> date, <span class="hl-class">Model</span> model) {
+    <span class="hl-class">LocalDate</span> target = (date != <span class="hl-keyword">null</span>) ? <span class="hl-class">LocalDate</span>.<span class="hl-method">parse</span>(date) : <span class="hl-class">LocalDate</span>.<span class="hl-method">now</span>().<span class="hl-method">minusDays</span>(<span class="hl-number">1</span>);
+    model.<span class="hl-method">addAttribute</span>(<span class="hl-string">&quot;rows&quot;</span>, statRepository.<span class="hl-method">findByStatDate</span>(target));
+    <span class="hl-keyword">return</span> <span class="hl-string">&quot;admin/stats&quot;</span>;
+}</code></pre>
+<pre><code class="language-html"><span class="hl-keyword">&lt;table</span> <span class="hl-annotation">class</span>=<span class="hl-string">&quot;w-full text-sm&quot;</span><span class="hl-keyword">&gt;</span>
+  <span class="hl-keyword">&lt;tr</span> <span class="hl-annotation">th:each</span>=<span class="hl-string">&quot;r : ${rows}&quot;</span> <span class="hl-annotation">class</span>=<span class="hl-string">&quot;border-b&quot;</span><span class="hl-keyword">&gt;</span>
+    <span class="hl-keyword">&lt;td</span> <span class="hl-annotation">class</span>=<span class="hl-string">&quot;py-2&quot;</span> <span class="hl-annotation">th:text</span>=<span class="hl-string">&quot;${r.categoryCode}&quot;</span><span class="hl-keyword">&gt;</span>CATE<span class="hl-keyword">&lt;/td</span><span class="hl-keyword">&gt;</span>
+    <span class="hl-keyword">&lt;td</span> <span class="hl-annotation">th:text</span>=<span class="hl-string">&quot;${r.orderCount}&quot;</span><span class="hl-keyword">&gt;</span>0<span class="hl-keyword">&lt;/td</span><span class="hl-keyword">&gt;</span>
+    <span class="hl-keyword">&lt;td</span> <span class="hl-annotation">class</span>=<span class="hl-string">&quot;text-right&quot;</span> <span class="hl-annotation">th:text</span>=<span class="hl-string">&quot;${#numbers.formatInteger(r.salesAmount, 0, &#39;COMMA&#39;)}&quot;</span><span class="hl-keyword">&gt;</span>0<span class="hl-keyword">&lt;/td</span><span class="hl-keyword">&gt;</span>
+  <span class="hl-keyword">&lt;/tr</span><span class="hl-keyword">&gt;</span>
+<span class="hl-keyword">&lt;/table</span><span class="hl-keyword">&gt;</span></code></pre>
+<p>수백만 건을 매번 집계하던 화면이, 집계 테이블 수십 행 조회로 바뀌어 즉시 응답합니다.</p>
+<blockquote>
+<p>🧪 <strong>실습 — 일별 매출 집계</strong></p>
+<ol>
+  <li value="1"><code>orders</code>에 며칠치 주문을 카테고리를 섞어 넣습니다.</li>
+  <li value="2"><code>date</code>를 바꿔 가며 <code>dailySalesJob</code>을 실행해 <code>daily_sales_stat</code>을 채웁니다.</li>
+  <li value="3"><code>/admin/stats?date=...</code>에서 날짜별 매출이 맞게 나오는지 확인합니다.</li>
+  <li value="4">특정 날짜를 다시 집계해도(삭제 후 재생성) 행이 중복되지 않고 숫자가 동일한지 확인합니다.</li>
+</ol>
+</blockquote>
+<hr/>
+<p class="my_h2">이 장의 요점</p>
+<ul>
+  <li>통계는 무거운 집계를 새벽에 미리 해 두고 화면은 가벼운 조회만 하게 만드는 패턴입니다.</li>
+  <li>기준일을 JobParameter로 주입하면 특정 날짜만 다시 집계할 수 있고, <code>clearStatStep</code> + 복합 PK로 멱등성을 보장합니다.</li>
+  <li>GROUP BY 집계는 Reader의 SQL에서 DB에게 시키면 효율적이며, 화면은 집계 테이블만 조회해 즉시 응답합니다.</li>
+</ul>
+<hr/>
+<p><strong>다음 장에서는</strong> 회원을 다루는 사례로 넘어갑니다. 1년 이상 로그인하지 않은 회원을 휴면으로 전환하면서, &quot;상태 변경&quot;과 &quot;알림 발송 대상 생성&quot;을 별도 Step으로 분리하는 설계를 배웁니다.</p>
+
+</body>
+</html>

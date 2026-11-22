@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"
+  "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <title></title>
+  <link href="../Styles/Style0001.css" rel="stylesheet" type="text/css"/>
+</head>
+
+<body>
+<h2 class="disp_none">15장. Skip·Retry와 트랜잭션 설계</h2>
+<p class="my_h1">15장. Skip·Retry와 트랜잭션 설계</p>
+<blockquote>
+<p><strong>이 장에서 배우는 것</strong></p>
+<ul>
+  <li>Chunk 안에서 Retry·Skip·Recover가 함께 동작하는 방식</li>
+  <li>무엇을 재시도하고, 무엇을 건너뛰고, 무엇으로 전체를 멈출지 정하는 기준</li>
+  <li>Skip/Retry가 트랜잭션·롤백과 맺는 관계</li>
+</ul>
+</blockquote>
+<hr/>
+<p class="my_h2">15.1 세 가지 선택지</p>
+<p>대량 처리 중 한 건에서 오류가 났을 때, 우리에겐 세 가지 선택이 있습니다.</p>
+<pre><code class="language-text">Retry   다시 시도한다       (일시적 오류)
+Skip    건너뛰고 계속한다    (데이터 오류, 일부 누락 허용)
+Fail    전체를 멈춘다        (정확성이 생명, 누락 불가)</code></pre>
+<p>어느 것을 택할지는 <strong>오류의 성격</strong>과 <strong>업무의 성격</strong>으로 결정합니다. Spring Batch의 대표적 트랜잭션 패턴도 Chunk 내부에서 Retry, Skip, Recover를 조합하는 방식입니다.</p>
+<pre><code class="language-text">네트워크 타임아웃     → Retry  (잠시 후 되면 성공)
+잘못된 CSV 행        → Skip   (그 행만 빼고 나머지 저장)
+DB 제약조건 위반     → 업무에 따라 Fail 또는 Skip
+정산 금액 계산 오류   → Fail   (한 건도 틀리면 안 됨)</code></pre>
+<blockquote>
+<p>📌 <strong>핵심:</strong> Retry는 &quot;오류의 원인이 곧 사라질 것&quot;일 때, Skip은 &quot;그 건은 포기해도 되는&quot; 데이터일 때, Fail은 &quot;한 건의 오류도 용납할 수 없는&quot; 업무일 때 씁니다.</p>
+</blockquote>
+<hr/>
+<p class="my_h2">15.2 Retry와 Skip을 함께 걸기</p>
+<p>둘은 함께 쓸 수 있고, 보통 함께 씁니다. 먼저 재시도해 보고, 그래도 안 되면 건너뛰는 식입니다.</p>
+<pre><code class="language-java"><span class="hl-annotation">@Bean</span>
+<span class="hl-keyword">public</span> <span class="hl-class">Step</span> <span class="hl-method">robustStep</span>() {
+    <span class="hl-keyword">return</span> <span class="hl-keyword">new</span> <span class="hl-class">StepBuilder</span>(<span class="hl-string">&quot;robustStep&quot;</span>, jobRepository)
+            .&lt;<span class="hl-class">In</span>, <span class="hl-class">Out</span>&gt;<span class="hl-method">chunk</span>(<span class="hl-number">500</span>, transactionManager)
+            .<span class="hl-method">reader</span>(<span class="hl-method">reader</span>()).<span class="hl-method">processor</span>(<span class="hl-method">processor</span>()).<span class="hl-method">writer</span>(<span class="hl-method">writer</span>())
+            .<span class="hl-method">faultTolerant</span>()
+            .<span class="hl-method">retry</span>(<span class="hl-class">TransientException</span>.<span class="hl-keyword">class</span>).<span class="hl-method">retryLimit</span>(<span class="hl-number">3</span>)   <span class="hl-comment">// 일시 오류 3회 재시도</span>
+            .<span class="hl-method">skip</span>(<span class="hl-class">InvalidDataException</span>.<span class="hl-keyword">class</span>).<span class="hl-method">skipLimit</span>(<span class="hl-number">100</span>) <span class="hl-comment">// 데이터 오류 100건까지 스킵</span>
+            .<span class="hl-method">listener</span>(skipListener)                          <span class="hl-comment">// 스킵된 건 기록</span>
+            .<span class="hl-method">build</span>();
+}</code></pre>
+<p>동작 순서를 그림으로 보면 이렇습니다.</p>
+<pre><code class="language-text">아이템 처리 실패
+ → TransientException?  → retryLimit까지 재시도 → 그래도 실패면 ↓
+ → InvalidDataException? → skipLimit 안이면 건너뛰고 listener로 기록
+ → 둘 다 아니거나 한도 초과 → Step 실패(Fail)</code></pre>
+<blockquote>
+<p>⚠️ <code>skipLimit</code>을 너무 크게 잡으면 &quot;절반이 실패했는데도 성공으로 끝나는&quot; 위험이 있습니다. 한도를 합리적으로 두고, 한도를 넘으면 차라리 전체를 실패시켜 사람이 원인을 보게 하세요.</p>
+</blockquote>
+<hr/>
+<p class="my_h2">15.3 Skip은 트랜잭션과 어떻게 동작하나</p>
+<p>여기가 가장 헷갈리는 지점입니다. Chunk 기반 Step은 묶음 단위로 커밋하는데, 묶음 중 한 건이 Skip 대상 예외를 던지면 Spring Batch는 <strong>그 Chunk를 롤백하고, 아이템을 하나씩 다시 처리하며 문제의 한 건만 골라 건너뜁니다.</strong></p>
+<pre><code class="language-text">500건 묶음 처리 중 327번째에서 Skip 예외 발생
+ → 묶음 롤백
+ → 한 건씩(또는 더 작은 단위로) 다시 처리하며 327번째만 Skip
+ → 나머지 499건은 정상 커밋</code></pre>
+<p>이 &quot;되감아 다시 처리&quot; 때문에, Skip이 잦으면 성능이 떨어집니다. Skip은 예외적인 소수를 위한 장치이지, 데이터 대부분이 더러울 때 쓰는 도구가 아닙니다.</p>
+<blockquote>
+<p>⚠️ Processor나 Writer가 <strong>부수효과(외부 호출, 카운터 증가 등)</strong>를 가지면, Skip의 재처리 과정에서 그 부수효과가 여러 번 일어날 수 있습니다. Processor는 가능한 한 부수효과 없이 순수하게 만들고, 외부 전송 같은 부수효과는 Writer 한곳에 모으는 편이 안전합니다.</p>
+</blockquote>
+<hr/>
+<p class="my_h2">15.4 업무별 정책 결정 가이드</p>
+<p>지금까지의 사례를 정책 관점에서 정리하면 다음과 같습니다.</p>
+<pre><code class="language-text">CSV 업로드(5장)   잘못된 행 Skip + 리포트  (일부 누락 허용)
+정산(7장)         계산 오류는 Fail         (정확성이 생명)
+외부 API(13장)    일시 오류 Retry           (곧 되살아남)
+삭제(12장)        Fail에 가깝게 보수적으로   (되돌릴 수 없음)</code></pre>
+<p>같은 &quot;DB 제약조건 위반&quot;도 사례에 따라 다릅니다. 알림 대상 중복(10장)은 Skip해도 되지만, 정산 중복은 멈춰서 원인을 봐야 합니다. <strong>정책은 코드가 아니라 업무가 정합니다.</strong></p>
+<blockquote>
+<p>🧪 <strong>실습 — 정책 비교 실험</strong></p>
+<ol>
+  <li value="1">5장 CSV 업로드 Step에서 <code>skipLimit</code>을 0으로 바꿔 봅니다. 잘못된 행 하나에 전체가 실패하는 것을 확인합니다.</li>
+  <li value="2">다시 <code>skipLimit</code>을 1000으로 두고, 잘못된 행만 빠지고 리포트에 남는 것과 비교합니다.</li>
+  <li value="3">두 동작 중 &quot;거래처 목록 업로드&quot;와 &quot;정산&quot;에 각각 어느 쪽이 맞는지 적어 봅니다.</li>
+</ol>
+</blockquote>
+<hr/>
+<p class="my_h2">이 장의 요점</p>
+<ul>
+  <li>Retry는 일시적 오류, Skip은 포기 가능한 데이터 오류, Fail은 정확성이 생명인 업무에 씁니다. Retry와 Skip은 함께 걸 수 있습니다.</li>
+  <li>Skip은 Chunk를 롤백하고 되감아 한 건씩 다시 처리하므로, 잦으면 느려집니다. 부수효과는 Writer에 모아 재처리에 안전하게 만듭니다.</li>
+  <li>Skip/Retry 정책은 코드가 아니라 업무가 정합니다. 같은 오류도 사례에 따라 건너뛸지 멈출지가 달라집니다.</li>
+</ul>
+<hr/>
+<p><strong>다음 장에서는</strong> 성능이 부족할 때의 확장을 다룹니다. 먼저 단일 스레드로 측정하고, 그다음 멀티스레드·파티셔닝으로 넓혀 가는 순서를 지키는 이유를 설명합니다.</p>
+
+</body>
+</html>

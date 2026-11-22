@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8"/>
+  <title>spring_batch_practical_cases</title>
+  <style>
+    body { font-family: 'Malgun Gothic','맑은 고딕',sans-serif;
+           line-height: 1.6; margin: 32px; }
+    h1 { font-size: 1.8em; }
+    h2.toc-part { margin: 1.2em 0 0.4em; font-size: 1.25em; }
+    p.toc-item { margin: 0.2em 0 0.2em 1.2em; }
+    a { text-decoration: none; color: #1a4f9c; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <h1>spring_batch_practical_cases</h1>
+  <p class="toc-item"><a href="Text/ch0002_spring_batch_practical_cases_preface.xhtml">머리말</a></p>
+  <h2 class="toc-part"><a href="Text/ch0100_part_spring_batch_practical_cases.xhtml">1부. 시작하기 — 배치와 프로젝트 골격</a></h2>
+  <p class="toc-item"><a href="Text/ch0101_spring_batch_practical_cases.xhtml"><strong>1장. Spring Batch는 언제 쓰는가</strong> — 배치 작업의 정의, 적합/부적합 판단 기준, 10가지 사례 지도</a></p>
+  <p class="toc-item"><a href="Text/ch0102_spring_batch_practical_cases.xhtml"><strong>2장. 개발 환경과 프로젝트 준비</strong> — Maven·Spring Boot·MySQL·Lombok 설정, `application.properties`, 메타테이블 초기화</a></p>
+  <p class="toc-item"><a href="Text/ch0103_spring_batch_practical_cases.xhtml"><strong>3장. Spring Batch 핵심 구조</strong> — Job·Step·Chunk, Reader→Processor→Writer, JobRepository와 메타테이블</a></p>
+  <p class="toc-item"><a href="Text/ch0104_spring_batch_practical_cases.xhtml"><strong>4장. 운영 관리자 화면 만들기</strong> — Thymeleaf + Tailwind(CDN) + Spring Security로 배치 실행·이력 조회 대시보드 구축</a></p>
+  <h2 class="toc-part"><a href="Text/ch0200_part_spring_batch_practical_cases.xhtml">2부. 파일과 데이터 입출력 사례</a></h2>
+  <p class="toc-item"><a href="Text/ch0205_spring_batch_practical_cases.xhtml"><strong>5장. 상품 CSV 대량 업로드</strong> — FlatFileItemReader, Validation 검증, JdbcBatchItemWriter, 실패 행 리포트</a></p>
+  <p class="toc-item"><a href="Text/ch0206_spring_batch_practical_cases.xhtml"><strong>6장. DB 마이그레이션과 데이터 보정</strong> — JdbcPagingItemReader로 구간 분할, 변경 전 백업·검증·반영</a></p>
+  <h2 class="toc-part"><a href="Text/ch0300_part_spring_batch_practical_cases.xhtml">3부. 정산과 집계 사례</a></h2>
+  <p class="toc-item"><a href="Text/ch0307_spring_batch_practical_cases.xhtml"><strong>7장. 매일 새벽 정산 배치</strong> — 멱등성 설계, settlement 테이블, 중복 정산 방지(UNIQUE)</a></p>
+  <p class="toc-item"><a href="Text/ch0308_spring_batch_practical_cases.xhtml"><strong>8장. 통계·리포트 집계</strong> — 기준일 JobParameter, 집계 테이블, 대시보드 연동</a></p>
+  <h2 class="toc-part"><a href="Text/ch0400_part_spring_batch_practical_cases.xhtml">4부. 회원·알림·후처리 사례</a></h2>
+  <p class="toc-item"><a href="Text/ch0409_spring_batch_practical_cases.xhtml"><strong>9장. 휴면 회원 전환</strong> — 상태 변경 Step과 알림 대상 생성 Step 분리</a></p>
+  <p class="toc-item"><a href="Text/ch0410_spring_batch_practical_cases.xhtml"><strong>10장. 알림 발송 대상 생성</strong> — 수신 동의·중복 발송 방지, notification_target 테이블</a></p>
+  <p class="toc-item"><a href="Text/ch0411_spring_batch_practical_cases.xhtml"><strong>11장. 로그·이벤트 데이터 후처리</strong> — 원본 보존, 요약·집계 테이블 생성</a></p>
+  <p class="toc-item"><a href="Text/ch0412_spring_batch_practical_cases.xhtml"><strong>12장. 만료·삭제·아카이빙</strong> — Chunk 단위 삭제로 DB 부하 분산, 아카이브 이관</a></p>
+  <h2 class="toc-part"><a href="Text/ch0500_part_spring_batch_practical_cases.xhtml">5부. 외부 연동·확장·운영</a></h2>
+  <p class="toc-item"><a href="Text/ch0513_spring_batch_practical_cases.xhtml"><strong>13장. 외부 API 연동 데이터 수집</strong> — Custom Reader, Retry 정책, 중복 저장 방지</a></p>
+  <p class="toc-item"><a href="Text/ch0514_spring_batch_practical_cases.xhtml"><strong>14장. 검색 인덱스 동기화</strong> — Custom Writer, 전체 재색인 vs 증분 색인</a></p>
+  <p class="toc-item"><a href="Text/ch0515_spring_batch_practical_cases.xhtml"><strong>15장. Skip·Retry와 트랜잭션 설계</strong> — Chunk 내 Retry/Skip/Recover, 정책 결정 기준</a></p>
+  <p class="toc-item"><a href="Text/ch0516_spring_batch_practical_cases.xhtml"><strong>16장. 성능 확장: 멀티스레드·파티셔닝</strong> — 단일 스레드 측정 후 확장하기</a></p>
+  <p class="toc-item"><a href="Text/ch0517_spring_batch_practical_cases.xhtml"><strong>17장. 운영: 스케줄링·재시작·모니터링</strong> — `@Scheduled` 연동, 재시작, 실행 이력 추적, 알림</a></p>
+  <h2 class="toc-part"><a href="Text/ch3000_part_spring_batch_practical_cases_appendix.xhtml">부록</a></h2>
+  <p class="toc-item"><a href="Text/ch3001_spring_batch_practical_cases.xhtml"><strong>A. Spring Batch 메타테이블 빠른 참조</strong></a></p>
+  <p class="toc-item"><a href="Text/ch3002_spring_batch_practical_cases.xhtml"><strong>B. Reader/Writer 구성 조합 치트시트</strong></a></p>
+  <p class="toc-item"><a href="Text/ch3003_spring_batch_practical_cases.xhtml"><strong>C. 실무 배치 설계 체크리스트</strong> (JobParameter·멱등성·ChunkSize·Skip/Retry·이력)</a></p>
+  <p class="toc-item"><a href="Text/ch3004_spring_batch_practical_cases.xhtml"><strong>D. 용어집</strong></a></p>
+
+</body>
+</html>

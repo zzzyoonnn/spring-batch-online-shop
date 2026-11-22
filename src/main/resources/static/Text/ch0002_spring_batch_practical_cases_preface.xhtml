@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"
+  "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <title></title>
+  <link href="../Styles/Style0001.css" rel="stylesheet" type="text/css"/>
+</head>
+
+<body>
+<h1 class="disp_none">머리말</h1>
+<p class="my_h1">머리말</p>
+<p class="my_h2">새벽 3시에 일하는 시스템</p>
+<p>서비스를 운영하다 보면 사람이 직접 버튼을 누르지 않아도 돌아가야 하는 일들이 쌓입니다. 어제 발생한 주문을 모아 판매자별 정산 금액을 계산하고, 1년 동안 로그인하지 않은 회원을 휴면으로 전환하고, 관리자가 올린 상품 10만 건짜리 CSV를 한 줄씩 검증해 저장하고, 3년 지난 로그를 아카이브로 옮깁니다. 이런 일들은 대개 <strong>새벽 3시, 트래픽이 가장 적은 시간에 조용히 실행됩니다.</strong></p>
+<p>문제는 이런 작업을 평범한 API 요청이나 단순 반복문으로 처리하려 할 때 시작됩니다. 10만 건을 한 트랜잭션에 넣으면 메모리가 터지고, 중간에 실패하면 어디까지 처리됐는지 알 수 없으며, 같은 정산을 두 번 돌리면 정산금이 두 배로 쌓입니다. <strong>대량 데이터를, 실패에 대비하며, 다시 실행해도 안전하게 처리하는 일</strong> — 이것이 Spring Batch가 풀려는 문제입니다.</p>
+<p>이 책은 그 문제를 <em>이론으로</em> 설명하는 대신 <em>직접 만들며</em> 익히도록 구성했습니다.</p>
+<p class="my_h2">이 책을 읽는 법</p>
+<p>이 책은 처음부터 끝까지 <strong>하나의 프로젝트</strong>를 함께 만들어 갑니다. 우리가 운영할 가상의 쇼핑몰은 <strong>「마켓온(MarketOn)」</strong>이고, 우리는 그 운영팀이 쓰는 백오피스 배치 시스템을 만듭니다. 관리자 화면은 Thymeleaf와 Tailwind CSS로 그리고 Spring Security로 보호하며, 그 화면의 버튼 하나하나가 실제 Spring Batch Job을 실행합니다.</p>
+<p>2부부터는 <code>practical_cases.txt</code>에 정리된 실전 사례 — CSV 업로드, 정산, 휴면 전환, 통계 집계, 외부 API 수집, 검색 인덱스 동기화, 아카이빙 — 를 <strong>한 장에 하나씩</strong> 마켓온 위에 구현합니다. 앞 장에서 만든 것 위에 다음 장이 쌓이므로, 순서대로 따라오면 책을 덮을 때 동작하는 운영 배치 시스템 한 벌이 손에 남습니다.</p>
+<p>본문에는 다음과 같은 박스가 반복해서 나옵니다. 의미를 미리 익혀 두면 읽기 편합니다.</p>
+<blockquote>
+<p>🧪 <strong>실습</strong> — 직접 손으로 따라 만드는 부분입니다. 눈으로만 읽지 말고 꼭 실행해 보세요.</p>
+</blockquote>
+<blockquote>
+<p>💡 <strong>팁</strong> — 알아 두면 편한 보조 정보입니다.</p>
+</blockquote>
+<blockquote>
+<p>⚠️ <strong>주의</strong> — 운영에서 사고로 이어지기 쉬운 지점입니다.</p>
+</blockquote>
+<blockquote>
+<p>📌 <strong>핵심</strong> — 그 절에서 단 하나만 기억해야 할 문장입니다.</p>
+</blockquote>
+<p class="my_h2">단 하나만 기억한다면</p>
+<blockquote>
+<p><strong>&quot;한 번에 다 하지 말고 — 작게 나눠 처리하고, 다시 돌려도 안전하게.&quot;</strong></p>
+</blockquote>
+<p>이 한 문장이 책 전체를 관통합니다. 100만 건을 한 번에 <code>DELETE</code>하지 않고 1,000건씩 나누는 것(작게 나눠 처리하기), 같은 정산 배치를 두 번 돌려도 결과가 망가지지 않게 만드는 것(다시 돌려도 안전하게, 즉 <strong>멱등성</strong>). 사례는 CSV·정산·휴면·통계·API로 제각각이지만, 좋은 배치를 만드는 원리는 늘 이 문장으로 수렴합니다. 매 장 끝에서 우리는 이 원칙으로 돌아올 것입니다.</p>
+<p class="my_h2">누구를 위한 책인가</p>
+<p>이 책은 <strong>자바와 스프링 부트로 무언가를 만들어 본 실무 개발자</strong>를 위한 책입니다. <code>@RestController</code>로 API를 만들고, JPA나 JDBC로 DB를 다뤄 본 정도면 충분합니다. Spring Batch를 처음 접해도 괜찮도록 3장에서 핵심 구조를 처음부터 설명합니다. 다만 자바 문법이나 스프링 부트의 기본 개념 자체를 설명하지는 않습니다.</p>
+<p>이 책이 약속하는 것은 분명합니다. 마지막 장을 덮을 때 여러분은 <em>&quot;이 업무에 배치를 써야 할까?&quot;</em>를 스스로 판단하고, <em>&quot;어떻게 나누고, 어떻게 다시 실행해도 안전하게 만들까?&quot;</em>를 코드로 옮길 수 있게 됩니다. 그럼 마켓온의 첫 출근, 1장에서 시작하겠습니다.</p>
+
+</body>
+</html>
